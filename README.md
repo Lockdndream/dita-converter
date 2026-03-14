@@ -2,6 +2,8 @@
 ![DITA](https://img.shields.io/badge/DITA-1.3-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-proof--of--concept-yellow)
+📸 [View Screenshots](SCREENSHOTS.md)
+
 # DITA Converter Tool
 
 A lightweight, open-source proof-of-concept that converts text-based **PDF** and **DOCX** files into valid **DITA 1.3 XML** via a rule-based pipeline with a Streamlit web UI.
