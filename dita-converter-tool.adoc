@@ -1,0 +1,475 @@
+= DITA Converter Tool
+:doctype: article
+:author: Lockdndream
+:revnumber: 1.0.0
+:revdate: 2026-03-14
+:toc: left
+:toc-title: Contents
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: screenshots
+:description: A lightweight, open-source proof-of-concept that converts text-based PDF and DOCX files into valid DITA 1.3 XML via a rule-based pipeline with a Streamlit web UI.
+
+// Badges
+image:https://img.shields.io/badge/python-3.9+-blue[Python 3.9+]
+image:https://img.shields.io/badge/DITA-1.3-orange[DITA 1.3]
+image:https://img.shields.io/badge/license-MIT-green[MIT License]
+image:https://img.shields.io/badge/status-proof--of--concept-yellow[Proof of Concept]
+
+''''
+
+== Overview
+
+The DITA Converter Tool is a lightweight, open-source proof-of-concept application that converts text-based *PDF* and *DOCX* files into valid *DITA 1.3 XML* via a rule-based pipeline.
+
+The tool was built to demonstrate the viability of automated structured content conversion — taking unstructured technical documentation and producing DITA-compliant XML output that can be consumed by any DITA-aware content management system or publishing pipeline.
+
+.Key facts
+[cols="1,2"]
+|===
+|DITA Version |1.3 (2.0 migration path documented)
+|Conversion Time |~2.3 seconds per document
+|Input Formats |Text-based PDF, Microsoft Word DOCX
+|Output Format |DITA 1.3 XML (concept, task, reference)
+|UI |Streamlit web application
+|License |MIT
+|===
+
+''''
+
+== Screenshots
+
+.Upload a PDF or DOCX file
+image::ui_upload.png[Upload screen,800]
+
+.Live pipeline stage indicators
+image::ui_pipeline.png[Pipeline screen,800]
+
+.Content inventory stats
+image::ui_stats.png[Stats screen,800]
+
+.Validation report
+image::ui_report.png[Validation report,800]
+
+.DITA XML output preview
+image::ui_xml_output.png[XML output,800]
+
+''''
+
+== Pipeline Architecture
+
+The tool processes documents through a sequential four-module pipeline. Each module has a single, well-defined responsibility and communicates through a shared internal data structure called the *Content Tree*.
+
+[source]
+----
+Upload PDF or DOCX
+        │
+        ▼
+  ┌─────────────┐
+  │  Extractor  │  pdfplumber / python-docx
+  └─────────────┘  PDF/DOCX → Content Tree (list of block dicts)
+        │
+        ▼
+  ┌─────────────┐
+  │   Mapper    │  config/mapping_rules.yaml (PyYAML)
+  └─────────────┘  Content Tree → Annotated Content Tree
+        │
+        ▼
+  ┌─────────────┐
+  │  Generator  │  lxml
+  └─────────────┘  Annotated Tree → DITA 1.3 XML string
+        │
+        ▼
+  ┌─────────────┐
+  │  Validator  │  lxml well-formedness check
+  └─────────────┘  XML → ValidationResult + human-readable report
+        │
+        ▼
+  Download .dita + View report in UI
+----
+
+=== Content Tree Block Schema
+
+The Content Tree is the internal data structure passed between pipeline modules. Each block represents one semantic unit from the source document.
+
+[cols="1,1,3"]
+|===
+|Field |Type |Description
+
+|`type`
+|`str`
+|Block category: `heading`, `paragraph`, `list_item`, `table`, `figure`, `code_block`
+
+|`level`
+|`int \| None`
+|Heading depth (1–6). `None` for non-headings
+
+|`text`
+|`str`
+|Raw extracted text content
+
+|`style_name`
+|`str \| None`
+|Original DOCX style name (e.g. `Heading 1`, `Body Text`). `None` for PDF blocks
+
+|`dita_element`
+|`str \| None`
+|Assigned DITA element after mapping (e.g. `title`, `p`, `note:warning`). `None` before mapping
+
+|`children`
+|`list \| None`
+|Nested blocks for tables and lists
+
+|`attributes`
+|`dict \| None`
+|Extra metadata (e.g. `{"is_bold": true, "note_type": "warning"}`)
+|===
+
+''''
+
+== Mapping Rules
+
+The `config/mapping_rules.yaml` file controls how source document elements map to DITA 1.3 elements. *No code changes are required* to adapt the tool to a new document style — only the YAML file needs updating.
+
+=== Heading Map
+
+[source,yaml]
+----
+heading_map:
+  h1_first: title          # First H1 → topic <title>
+  h1: section_title        # Subsequent H1 → <section><title>
+  h2: sectiondiv_title     # H2 → <sectiondiv><title>
+  h3: sectiondiv_title     # H3 → nested <sectiondiv><title>
+----
+
+=== Note / Callout Map
+
+Callout boxes are detected by pattern matching on block header text and mapped to the appropriate DITA `<note>` type.
+
+[source,yaml]
+----
+note_map:
+  - pattern: "IMPORTANT INFORMATION"
+    element: note
+    type: important
+  - pattern: "^WARNING"
+    element: note
+    type: warning
+  - pattern: "^CAUTION"
+    element: note
+    type: caution
+  - pattern: "^DANGER"
+    element: note
+    type: danger
+  - pattern: "^Note[s]?:"
+    element: note
+    type: note
+----
+
+=== Table Map
+
+[source,yaml]
+----
+table_map:
+  default: table           # Full CALS structure with <thead> + <colspec>
+  abbreviations: dl        # Term/Description 2-col tables → <dl><dlentry>
+  abbreviation_signals:
+    - "Term"
+    - "Abbreviation"
+    - "Acronym"
+----
+
+''''
+
+== Sample Output
+
+The following is an excerpt from the DITA 1.3 XML produced by converting `MDE-5570A.pdf` — a Gilbarco Passport technical manual.
+
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE task PUBLIC "-//OASIS//DTD DITA Task//EN"
+       "task.dtd">
+<task id="introduction" xml:lang="en-US">
+  <title>Introduction</title>
+  <shortdesc>This manual provides setup and configuration
+    information for Passport system stores.</shortdesc>
+  <taskbody>
+    <section>
+      <title>Feature Activation</title>
+      <p>After completing the on-boarding process with POS
+        and the Payment Network, you must activate the
+        Mobile Payment feature.</p>
+      <steps>
+        <step>
+          <cmd>From the MWS main screen, go to
+            <menucascade>
+              <uicontrol>Set Up</uicontrol>
+              <uicontrol>Network Menu</uicontrol>
+              <uicontrol>Mobile Payment</uicontrol>
+            </menucascade>
+          </cmd>
+        </step>
+      </steps>
+      <note type="important">
+        <p>Before configuring Conexxus Mobile Payment,
+          ensure the system is running V11.01D or later.</p>
+      </note>
+    </section>
+  </taskbody>
+</task>
+----
+
+''''
+
+== Installation
+
+=== Prerequisites
+
+* Python 3.9 or later
+* pip
+
+=== Steps
+
+. Clone the repository:
++
+[source,bash]
+----
+git clone https://github.com/your-org/dita-converter.git
+cd dita-converter
+----
+
+. Install dependencies:
++
+[source,bash]
+----
+pip install -r requirements.txt
+----
+
+. Run the UI:
++
+[source,bash]
+----
+streamlit run ui/app.py
+----
+
+. Open your browser at `http://localhost:8501`
+
+''''
+
+== Project Structure
+
+[source]
+----
+dita-converter/
+├── agents/
+│   ├── __init__.py
+│   ├── extractor.py       # Module 1: PDF/DOCX → Content Tree
+│   ├── mapper.py          # Module 2: Content Tree + YAML → annotated tree
+│   ├── generator.py       # Module 3: Annotated tree → DITA 1.3 XML
+│   └── validator.py       # Module 4: XML validation + report
+├── config/
+│   └── mapping_rules.yaml # Style mapping rules (user-editable)
+├── ui/
+│   └── app.py             # Streamlit web application
+├── tests/                 # Unit tests per module
+├── docs/                  # Architecture, SOT, Project Plan, Services
+├── screenshots/           # UI screenshots
+├── sample_outputs/        # Example .dita output files
+├── .gitignore
+├── CHANGELOG.md
+├── requirements.txt
+└── README.md
+----
+
+''''
+
+== Dependencies
+
+[cols="1,1,1,2"]
+|===
+|Library |Version |License |Purpose
+
+|pdfplumber
+|0.10.x
+|MIT
+|Layout-aware PDF text and table extraction
+
+|python-docx
+|1.1.x
+|MIT
+|Microsoft Word DOCX parsing and style extraction
+
+|PyYAML
+|6.x
+|MIT
+|Load and parse `mapping_rules.yaml`
+
+|lxml
+|5.x
+|BSD
+|DITA 1.3 XML generation and well-formedness validation
+
+|Streamlit
+|1.35.x
+|Apache 2.0
+|Web UI — file upload, preview, and download
+
+|pytest
+|8.x
+|MIT
+|Unit testing framework
+|===
+
+NOTE: All dependencies are open-source with permissive licenses. No API keys, no cloud services, no runtime cost. The tool runs entirely on local hardware.
+
+''''
+
+== Development Agent Model
+
+This project was built using a structured four-agent development workflow. These are roles played during the development process — they are not components of the runtime tool.
+
+[cols="1,1,3"]
+|===
+|Agent |Role |Responsibilities
+
+|*Allocator*
+|Task Planning
+|Defines tasks, acceptance criteria, and sequencing for each build session
+
+|*Coder*
+|Implementation
+|Writes all production code, unit tests, and configuration files
+
+|*Reviewer*
+|Quality Assurance
+|Reviews code for correctness, edge cases, and DITA spec adherence
+
+|*Scribe*
+|Documentation
+|Writes commit messages, updates docs, and maintains the changelog
+|===
+
+Each build session follows a fixed handoff sequence:
+
+[source]
+----
+ALLOCATOR → defines task + acceptance criteria
+    │
+    ▼
+CODER → implements the task
+    │
+    ▼
+REVIEWER → validates against criteria
+    │
+    ▼
+SCRIBE → commits + documents the approved change
+----
+
+No code is committed without passing the Reviewer gate. No task begins without Allocator-defined criteria.
+
+''''
+
+== Limitations
+
+[cols="1,1"]
+|===
+|Limitation |Future Version
+
+|Text-based PDFs only (no OCR)
+|v2.1 — Tesseract OCR integration
+
+|One DITA topic per file
+|v2.0 — DITA map and bookmap generation
+
+|Images extracted as placeholders
+|v2.0 — image file extraction
+
+|Local deployment only
+|v3.1 — Docker + Fly.io / Render
+
+|DITA 1.3 output
+|v3.0 — full DITA 2.0 migration
+|===
+
+''''
+
+== Roadmap
+
+[cols="1,1,3"]
+|===
+|Version |Name |Key Additions
+
+|*v1.0*
+|Proof of Concept
+|Text PDF + DOCX → DITA 1.3, YAML mapping, Streamlit UI ✓
+
+|v1.1
+|Quality & Tests
+|Full pytest suite, improved mapping, better validation reporting
+
+|v2.0
+|Multi-Topic
+|DITA map generation, multiple topics per file, bookmap support
+
+|v2.1
+|OCR Support
+|Scanned PDF support via Tesseract OCR
+
+|v3.0
+|DITA 2.0
+|Full migration to DITA 2.0 output
+
+|v3.1
+|Cloud Deploy
+|Docker packaging, cloud deployment, multi-user support
+|===
+
+''''
+
+== Changelog
+
+=== v1.0.0 — 2026-03-14
+
+*S-07 Integration & Handoff*
+
+* Full end-to-end integration test: both sample PDFs, all 4 agents
+* Verified: 0 errors, ≤1 warning per document, ~2.3s per file
+
+*S-06 Streamlit UI*
+
+* File uploader for PDF and DOCX with live pipeline stage indicators
+* Three output tabs: DITA XML preview, Validation Report, Content Stats
+* Download button for `.dita` file
+* Scanned PDF error shown cleanly with user guidance
+
+*S-05 Validator Module*
+
+* XML well-formedness check via lxml
+* Structural checks: root tag, topic id, title, empty sections
+* Content inventory stats and human-readable plain-text report
+
+*S-04 Generator Module*
+
+* Full DITA 1.3 XML serialisation with DOCTYPE per topic type
+* CALS tables, notes, steps, figures, lists, menucascade
+
+*S-03 Mapper Module*
+
+* YAML-driven annotation with zero unmapped blocks
+* Callout table reclassification, task signal detection, UI path detection
+
+*S-02 Extractor Module*
+
+* Font-size-calibrated heading detection for Gilbarco Passport manuals
+* PDF and DOCX extraction with scanned PDF guard
+
+*S-01 Project Scaffold*
+
+* Directory layout, requirements, mapping rules, agent stubs, git setup
+
+''''
+
+_DITA Converter Tool · v1.0.0 · MIT License_
