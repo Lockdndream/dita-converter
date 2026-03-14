@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.dita
+.streamlit/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+uploads/
+output/
+.env

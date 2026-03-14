@@ -1,0 +1,173 @@
+# =============================================================================
+# DITA Converter Tool — Mapping Rules
+# Style Reference: Gilbarco Passport Technical Manuals (MDE-5570A, MDE-3839Q)
+# DITA Version: 1.3
+# Decisions locked: 2026-03-14
+# Schema Profile: gilbarco_passport_manuals
+# =============================================================================
+
+# --- Topic Type Detection ---
+# Default topic type. Overridden by pattern detection in topic_type_signals.
+# Options: concept | task | reference
+topic_type: concept
+
+topic_type_signals:
+  task:
+    - "proceed as follows"
+    - "to configure"
+    - "to install"
+    - "to verify"
+    - "proceed with"
+    - "proceed as"
+  reference:
+    - "parts list"
+    - "the following table"
+    - "field name"
+    - "abbreviations and acronyms"
+    - "component specifications"
+
+# --- Heading → DITA Element ---
+# h1_first: the very first H1 in the document becomes the topic <title>
+# All subsequent H1s open a new <section>
+heading_map:
+  h1_first: title
+  h1: section_title
+  h2: sectiondiv_title
+  h3: sectiondiv_title
+
+# --- Paragraph ---
+paragraph_map:
+  default: p
+
+# --- Lists ---
+list_map:
+  bullet: ul                  # • bullets → <ul><li>
+  numbered: ol                # 1. items in non-task context → <ol><li>
+  numbered_in_task: step      # 1. items after task signal → <step><cmd>
+
+# --- Task Step Sub-content ---
+# Sub-bullets under a numbered task step → <info><ul><li> (not <substeps>)
+# Rationale: source docs use unordered sub-items, not sequential sub-steps (D-008)
+step_substep_map:
+  sub_bullets_under_step: info_ul
+  sub_bullets_element: ul
+
+# --- Tables → DITA CALS ---
+# All tables use full CALS structure with <thead> and per-column <colspec> (D-009)
+# Exception: Term/Description abbreviation tables → <dl><dlentry>
+table_map:
+  default: table
+  structure:
+    thead: true               # First row always becomes <thead>
+    multi_column: true        # Generate <colspec> for every column
+    colspec_naming: "col{n}"  # col1, col2, col3 ...
+    frame: all
+    rowsep: 1
+    colsep: 1
+  abbreviations: dl
+  abbreviation_signals:
+    - "Term"
+    - "Abbreviation"
+    - "Acronym"
+    - "Description"           # Only triggers dl when paired with Term/Abbreviation col
+
+# --- Callout Boxes → DITA Note Types ---
+# Matched against the first line of a callout block or inline paragraph prefix
+note_map:
+  - pattern: "IMPORTANT INFORMATION"
+    element: note
+    type: important
+    match: exact_block_header
+
+  - pattern: "^WARNING"
+    element: note
+    type: warning
+    match: block_header
+
+  - pattern: "^CAUTION"
+    element: note
+    type: caution
+    match: block_header
+
+  - pattern: "^DANGER"
+    element: note
+    type: danger
+    match: block_header
+
+  - pattern: "^Note[s]?:"
+    element: note
+    type: note
+    match: inline_prefix
+
+  - pattern: "^IMPORTANT:"
+    element: note
+    type: important
+    match: inline_prefix
+
+# --- Figures ---
+# Pattern matches "Figure 1:", "Figure 22:", etc.
+# Images are not extractable from text-based PDFs — placeholder inserted instead.
+figure_map:
+  pattern: "^Figure \\d+:"
+  element: fig
+  title_element: title
+  image_placeholder: "[IMAGE — {caption}]"
+
+# --- Inline Formatting ---
+inline_map:
+  bold: b
+  italic: i
+  monospace: codeph
+
+# --- UI Menu Path Detection ---
+# Detects "MWS > Set Up > Network Menu" patterns → <menucascade><uicontrol>
+ui_path_pattern: ".+\\s*>\\s*.+"
+ui_path_element: menucascade
+ui_path_child: uicontrol
+
+# --- Code / CLI Block Detection ---
+# Paragraphs starting with these strings → <codeblock>
+codeblock_signals:
+  - "telnet "
+  - "C:\\>"
+  - "C:/"
+  - "$ "
+  - "http://"
+  - "https://"
+
+# --- Drop Patterns ---
+# Blocks matching these patterns are silently discarded during extraction.
+# 'reason' field is logged in the validation report for traceability.
+drop_patterns:
+  - pattern: "^Page \\d+"
+    reason: pagination_footer
+
+  - pattern: "MDE-\\w+ .+ \\d{4}$"
+    reason: pagination_header
+
+  - pattern: "^© \\d{4}"
+    reason: boilerplate_copyright
+
+  - pattern: "^Table of Contents$"
+    reason: auto_generated_toc
+
+  - pattern: "^Related Documents$"
+    reason: deferred_to_v2_related_links
+
+  - pattern: "^GOLD(SM)? Library$"
+    reason: pagination_header
+
+# --- Fallback ---
+# Applied when no rule matches a content block.
+# The validator flags all fallback-mapped blocks in its report.
+fallback_element: p
+fallback_note: "Unmapped block — review in validation report"
+
+# --- Metadata ---
+dita_version: "1.3"
+schema_profile: "gilbarco_passport_manuals"
+created: "2026-03-14"
+notes: >
+  Decision log entries D-001 through D-009 are recorded in docs/02_Source_of_Truth.docx.
+  To add a new mapping profile, copy this file and change schema_profile.
+  Mapping rules are applied in order; first match wins for note_map entries.
