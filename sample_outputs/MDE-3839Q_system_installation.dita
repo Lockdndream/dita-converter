@@ -1,0 +1,538 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE task PUBLIC "-//OASIS//DTD DITA Task//EN"
+       "task.dtd">
+<task id="introduction" xml:lang="en-US">
+  <title>Introduction</title>
+  <shortdesc>This manual provides supplemental information for the following documents:</shortdesc>
+  <taskbody>
+    <sectiondiv>
+      <title>Purpose</title>
+      <p>This manual provides supplemental information for the following documents:</p>
+      <ul>
+        <li>
+          <p>MDE-5100 Passport Cashier Workstation Using the RV042 Firewall Router</p>
+        </li>
+        <li>
+          <p>MDE-5536 Passport Cashier Workstation Using the SZR or MNSP Firewall Router</p>
+        </li>
+        <li>
+          <p>MDE-5537 Passport Combined Cashier/Manager Workstation Using the SZR or MNSP</p>
+        </li>
+      </ul>
+      <p>Firewall Router</p>
+      <ul>
+        <li>
+          <p>MDE-5539 Passport Enhanced Dispenser Hub 2 (Passport V10 or Later) with SZR and</p>
+        </li>
+      </ul>
+      <p>MNSP Firewall Router</p>
+      <ul>
+        <li>
+          <p>MDE-5541 Passport Standalone Manager Workstation with SZR or MNSP Firewall</p>
+        </li>
+      </ul>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Intended Users</title>
+      <p>This manual is intended for Authorized Service Contractors (ASCs) who install Passport ™ systems.</p>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Related Documents</title>
+      <ul>
+        <li>
+          <p>Encore and Eclipse</p>
+        </li>
+        <li>
+          <p>Service Manual</p>
+        </li>
+        <li>
+          <p>Service Manual</p>
+        </li>
+      </ul>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Passport ™ System Installation Addendum</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>December 2020</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Abbreviations and Acronyms</title>
+      <note type="warning">
+        <p>The EMERGENCY STOP, ALL STOP, and
+PUMP STOP buttons at the cashier’s station
+WILL NOT shut off electrical power to the 
+pump/dispenser. This means that even if you
+activate these stops, fuel may continue to flow
+uncontrolled.
+You must use the TOTAL ELECTRICAL 
+SHUT-OFF in the case of an emergency and not
+the console’s ALL STOP and PUMP STOP or
+similar keys.</p>
+      </note>
+      <note type="important">
+        <p>Important Safety Information</p>
+      </note>
+      <ul>
+        <li>
+          <p>An evacuation of all unauthorized persons and vehicles</p>
+        </li>
+        <li>
+          <p>Use of safety tape, cones, or barricades at the affected</p>
+        </li>
+        <li>
+          <p>A total electrical shut-off of the affected unit(s)</p>
+        </li>
+      </ul>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Safety Symbols and Warning Words</title>
+      <note type="danger">
+        <p>DANGER : Alerts you to a hazard or unsafe practice</p>
+      </note>
+      <note type="warning">
+        <p>WARNING : Alerts you to a hazard or unsafe practice</p>
+      </note>
+      <note type="caution">
+        <p>CAUTION with Alert symbol: Designates a hazard or</p>
+      </note>
+      <note type="caution">
+        <p>CAUTION without Alert symbol: Designates a hazard or</p>
+      </note>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Working With Fuels and Electrical Energy</title>
+      <p>! WARNING !</p>
+    </sectiondiv>
+    <sectiondiv>
+      <title>!</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>!</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>!</title>
+      <note type="warning">
+        <p>Gasoline/DEF ingested may cause
+unconsciousness and burns to internal organs.
+Do not induce vomiting. Keep airway open.
+Oxygen may be needed at scene. Seek medical
+advice immediately.</p>
+      </note>
+      <note type="warning">
+        <p>DEF generates ammonia gas at higher temperatures.
+When opening enclosed panels, allow the unit to air out to
+avoid breathing vapors.
+If respiratory difficulties develop, move victim away from
+source of exposure and into fresh air. If symptoms persist,
+seek medical attention.</p>
+      </note>
+      <table frame="all">
+        <tgroup cols="2">
+          <colspec colname="col1" colnum="1"/>
+          <colspec colname="col2" colnum="2"/>
+          <thead>
+            <row>
+              <entry colname="col1">! WARNING</entry>
+              <entry colname="col2"></entry>
+            </row>
+          </thead>
+          <tbody>
+            <row>
+              <entry colname="col1"></entry>
+              <entry colname="col2">Gasoline inhaled may cause unconsciousness and burns to lips, mouth, and lungs. Keep airway open. Seek medical advice immediately.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+      <note type="warning">
+        <p>!</p>
+      </note>
+      <note type="warning">
+        <p>! Warning</p>
+      </note>
+      <note type="warning">
+        <p>The pump/dispenser contains a chemical known to the
+State of California to cause cancer.</p>
+      </note>
+      <table frame="all">
+        <tgroup cols="1">
+          <colspec colname="col1" colnum="1"/>
+          <thead>
+            <row>
+              <entry colname="col1">!! WWAARRNNIINNGG</entry>
+            </row>
+          </thead>
+          <tbody>
+            <row>
+              <entry colname="col1">DEF is mildly corrosive. Avoid contact with eyes, skin, and clothing. Ensure that eyewash stations and safety showers are close to the work location. Seek medical advice/recommended treatment if DEF spills into eyes.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+      <note type="warning">
+        <p>The pump/dispenser contains a chemical known to the
+State of California to cause birth defects or other
+reproductive harm.</p>
+      </note>
+    </sectiondiv>
+    <sectiondiv>
+      <title>In an Emergency</title>
+      <ul>
+        <li>
+          <p>Location of accident (for example, address, front/back of</p>
+        </li>
+        <li>
+          <p>Nature of accident (for example, possible heart attack, run</p>
+        </li>
+        <li>
+          <p>Age of victim (for example, baby, teenager, middle-age,</p>
+        </li>
+        <li>
+          <p>Whether or not victim has received first aid (for example,</p>
+        </li>
+        <li>
+          <p>Whether or not a victim has vomited (for example, if</p>
+        </li>
+      </ul>
+      <note type="important">
+        <p>IMPORTANT : Oxygen may be needed at scene if gasoline has</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <p>!</p>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !</p>
+      </note>
+      <note type="warning">
+        <p>WARNING !! WARNING</p>
+      </note>
+      <note type="important">
+        <p>This equipment has been tested and found to comply with the limits for a Class A digital
+device pursuant to Part 15 of the FCC Rules. These limits are designed to provide
+reasonable protection against harmful interference when the equipment is operated in a
+commercial environment. This equipment generates, uses, and can radiate radio frequency
+energy, and if not installed and used in accordance with the instruction manual, may cause
+harmful interference to radio communications. Operation of this equipment in a residential
+area is likely to cause harmful interference in which case the user will be required to correct
+the interference at his own expense. Changes or modifications not expressly approved by
+the manufacturer could void the user’s authority to operate this equipment.
+The long term characteristics or the possible physiological effects of radio frequency
+electromagnetic fields have not been investigated by Underwriters’ Laboratories (UL) Inc.</p>
+      </note>
+      <note type="warning">
+        <p>The Passport minitower contains no user serviceable parts. Due to the high energy
+components within the enclosure, service of the minitower must be performed by Gilbarco
+ASCs only.</p>
+      </note>
+    </sectiondiv>
+    <section>
+      <title>Federal Communications Commission (FCC) Warning</title>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+    </section>
+    <section>
+      <title>Hazardous Zones</title>
+      <p>All Passport system components are NOT for use over hazardous zones with the exception of the EDH and Distribution Box (D-Box), which can be mounted over hazardous zones.</p>
+      <note type="warning">
+        <p>WARNING</p>
+      </note>
+    </section>
+    <section>
+      <title>UL Approvals, System Requirements, and Component</title>
+    </section>
+    <section>
+      <title>Specifications</title>
+      <sectiondiv>
+        <title>UL Approvals</title>
+      </sectiondiv>
+      <sectiondiv>
+        <title>System Requirements</title>
+        <p>This section provides the system requirements of the Passport system.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Electrical Service</title>
+        <p>* Thermal printers must use Gilbarco-specified paper.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Operating Environment</title>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Storage Environment</title>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Before Installing Passport System</title>
+      <p>This section provides the following information for installing a POS system:</p>
+      <ul>
+        <li>
+          <p>“Unpacking Equipment”</p>
+        </li>
+        <li>
+          <p>“Preliminary Preparation” on page 7</p>
+        </li>
+        <li>
+          <p>“Mounting Locations” on page 7</p>
+        </li>
+        <li>
+          <p>“Routing Data Cables” on page 8</p>
+        </li>
+      </ul>
+      <p>Read this section thoroughly before installing the system.</p>
+      <sectiondiv>
+        <title>Unpacking Equipment</title>
+        <p>Upon delivery, unpack all system devices and inspect each device for damage. Check device</p>
+        <p>Model and Serial Numbers with the packing list. You must report all evident shipping damage to the carrier. Gilbarco warranty does not cover shipping damage.</p>
+        <note type="note">
+          <p>Note: Damage resulting from improper storage voids the Gilbarco warranty.</p>
+        </note>
+        <p>After you have inspected the system equipment, store it indoors in its original shipping carton, until the installation. This protects the equipment from dirt and damage.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Charging UPS</title>
+        <p>Unpack and connect the UPS to an AC power outlet, and allow the battery to charge when you are setting up the other Passport System components.</p>
+        <p>After charging for about 40 minutes, the UPS will be able to provide up to 15 minutes of backup power. After about two hours, the UPS changes from Fast Charge to Trickle Charge.</p>
+        <p>The UPS requires approximately four hours to charge completely.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Transporting Equipment</title>
+        <p>Always transport the equipment to a site in its original packaging, to avoid damage to the shock sensitive components such as hard disk drives.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Returning Equipment</title>
+        <p>All equipment or components returned under Gilbarco warranty policy or for repair, must be packaged properly to avoid shipping damage.</p>
+        <ul>
+          <li>
+            <p>Return the equipment in its original shipping container. If the original materials are not</p>
+          </li>
+        </ul>
+        <p>available, use a durable reinforced corrugated box and suitable packing material (polyfoam chips, polyurethane foam chips, or polystyrene foam chips).</p>
+        <ul>
+          <li>
+            <p>Fill the bottom of the container with at least 2 inches of packing material.</p>
+          </li>
+          <li>
+            <p>Ensure that the device is firmly packed.</p>
+          </li>
+          <li>
+            <p>Include a description of the malfunction or damage, and return that with shipping</p>
+          </li>
+        </ul>
+        <p>information.</p>
+        <ul>
+          <li>
+            <p>Prepare a Warranty Return Materials Authorization Form (for more information, refer to</p>
+          </li>
+        </ul>
+        <p>MDE-2149 Warranty Return Materials Authorization ) to ship with the device.</p>
+        <note type="note">
+          <p>Note: Gilbarco recommends that returned equipment be insured. Gilbarco inspects all</p>
+        </note>
+        <p>returned equipment for any damage caused during return shipment. The customer is responsible for all repair costs of damage to the equipment caused by improper packing during return shipment.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Preliminary Preparation</title>
+        <p>Inspect the site and all system equipment before the equipment installation. Ensure that all the required materials are present and the site meets all installation criteria, as specified in this manual and in MDE-3620 Point of Sale Systems Site Preparation Manual .</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mounting Locations</title>
+        <p>To mount and connect the equipment, refer to the appropriate installation poster (refer to “Introduction” on page 1). Following guidelines must be followed when installing the equipment:</p>
+        <ul>
+          <li>
+            <p>All equipment (except the equipment located in the Manager’s office) must be accessible</p>
+          </li>
+        </ul>
+        <p>to the site operators and service technicians.</p>
+        <ul>
+          <li>
+            <p>Install all equipment in an enclosed, weatherproof structure. Ambient room temperature</p>
+          </li>
+        </ul>
+        <p>must not exceed 104 °F (40 °C) or fall below 50 °F (10 °C). The maximum ambient temperature may be allowed only if the equipment is allowed free air flow.</p>
+        <ul>
+          <li>
+            <p>Do not install the equipment in areas exposed to direct sunlight. Provide shading if direct</p>
+          </li>
+        </ul>
+        <p>sunlight exposure exists.</p>
+        <ul>
+          <li>
+            <p>Do not expose equipment to high humidity or where liquid spills may occur.</p>
+          </li>
+        </ul>
+        <note type="caution">
+          <p>PA0421 VeriFone® MX915 PIN Pads must be installed within 90 meters of the LAN switch.</p>
+        </note>
+        <note type="caution">
+          <p>Devices such as PIN Pads, Car Wash, Tank Monitor™, and Price Sign Controllers will be
+connected to the EDH (after Passport V8.02 or later software upgrade) through an RS-232
+connection. Gilbarco recommends an RS-232 line booster for these devices if the
+Category 5 (CAT5) cable distance (run) is between 50 and 100 feet. If the CAT5 cable
+distance (run) is greater than 100 feet, an RS-232 line booster will be required along with
+an additional booster for every additional 50 feet.</p>
+        </note>
+        <ul>
+          <li>
+            <p>The Virtual Private Network (VPN) LAN Router (Q13708-07B), LAN Router </p>
+          </li>
+        </ul>
+        <p>(Q13708-05), and/or VPN Firewall Router (Q13078-08B) must be installed in a place where the Power button cannot be pushed and turned off unintentionally. If power to the</p>
+        <p>VPN LAN Router, LAN Router, or VPN Firewall Router is lost, then fuel dispensers,</p>
+        <p>VSAT, Back Office PC, and Passport workstations will be unable to communicate with each other.</p>
+        <ul>
+          <li>
+            <p>All Passport System components are NOT for use over hazardous zones with the</p>
+          </li>
+        </ul>
+        <p>exception of the EDH, and D-Box, which can be mounted over hazardous zones.</p>
+        <ul>
+          <li>
+            <p>The EDH must be installed near the Combined MWS or CWS #1. For more information,</p>
+          </li>
+        </ul>
+        <p>refer to MDE-4822 Passport Enhanced Dispenser Hub Installation Instructions .</p>
+        <note type="caution">
+          <p>CAUTION</p>
+        </note>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Routing Data Cables</title>
+        <p>Follow these guidelines when routing data cables:</p>
+        <ul>
+          <li>
+            <p>Allow sufficient space to route cables between the equipment.</p>
+          </li>
+          <li>
+            <p>Do not route data cables in the same conduit as AC wiring or near sources of interference</p>
+          </li>
+        </ul>
+        <p>such as fluorescent lights, compressor wiring, and so on.</p>
+        <ul>
+          <li>
+            <p>Do not coil, bend, or tie-wrap together surplus lengths of LAN or data cables. Install</p>
+          </li>
+        </ul>
+        <p>shorter cables, if required. Use Velcro ® -type cable-ties.</p>
+        <ul>
+          <li>
+            <p>Do not tie-wrap data cables to AC conduit to avoid surge and spike noise coupling.</p>
+          </li>
+          <li>
+            <p>Do not coil or tie-wrap data cable and AC line cords together.</p>
+          </li>
+          <li>
+            <p>Long Gilbarco data cables can be routed in plastic slotted raceways or wire mold, if</p>
+          </li>
+        </ul>
+        <p>required.</p>
+        <note type="caution">
+          <p>CAUTION</p>
+        </note>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Assistance</title>
+        <p>If you have any problems with site installation, contact the Gilbarco Distributor or ASC responsible for completing the site installation and the system start-up.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>P a</title>
+        <p>s</p>
+        <p>L i s</p>
+        <p>H a r w a</p>
+        <ul>
+          <li>
+            <p></p>
+          </li>
+        </ul>
+        <p>C</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>m</title>
+        <p>w i t h</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>M i n i t o w e r</title>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Appendix: Procedure to Change POSIFLEX Monitor </title>
+    </section>
+    <section>
+      <title>(LM-3110E) Resolution Setting</title>
+      <p>To change the resolution setting, proceed as follows:</p>
+      <steps>
+        <step>
+          <cmd>Connect the power cable and power up the monitor. From the Control Panel, navigate to the</cmd>
+        </step>
+      </steps>
+      <p>Display tab (see Figure 1).</p>
+      <fig>
+        <title>Connecting Power Cable and Navigating to Display Tab</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Connecting Power Cable and Navigating to Display Tab]</alt>
+        </image>
+      </fig>
+      <steps>
+        <step>
+          <cmd>Select Change display settings (see Figure 2).</cmd>
+        </step>
+      </steps>
+      <fig>
+        <title>Selecting Change Display Settings</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Selecting Change Display Settings]</alt>
+        </image>
+      </fig>
+      <steps>
+        <step>
+          <cmd>Select the Advanced tab. A new window with multiple tabs open (see Figure 3).</cmd>
+        </step>
+      </steps>
+      <fig>
+        <title>Selecting Advanced Tab</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Selecting Advanced Tab]</alt>
+        </image>
+      </fig>
+      <steps>
+        <step>
+          <cmd>Navigate to the Intel ® HD Graphics Control Panel tab. Set values as shown in figure and click Apply (see Figure 4).</cmd>
+        </step>
+      </steps>
+      <fig>
+        <title>Setting Display Values</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Setting Display Values]</alt>
+        </image>
+      </fig>
+      <steps>
+        <step>
+          <cmd>Click OK (see Figure 5).</cmd>
+        </step>
+      </steps>
+      <fig>
+        <title>Display Resolution Applied</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Display Resolution Applied]</alt>
+        </image>
+      </fig>
+      <p>The resolution setting procedure is now complete.</p>
+    </section>
+  </taskbody>
+</task>

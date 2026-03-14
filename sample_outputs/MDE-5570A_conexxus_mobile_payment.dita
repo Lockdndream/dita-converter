@@ -1,0 +1,673 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE task PUBLIC "-//OASIS//DTD DITA Task//EN"
+       "task.dtd">
+<task id="introduction" xml:lang="en-US">
+  <title>Introduction</title>
+  <shortdesc>This manual provides setup and configuration information for Passport ™ system stores that use</shortdesc>
+  <taskbody>
+    <sectiondiv>
+      <title>Purpose</title>
+      <p>This manual provides setup and configuration information for Passport ™ system stores that use</p>
+      <p>Conexxus Mobile Payment.</p>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Related Documents</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Passport ™ Conexxus Mobile Payment Configuratio n and Troubleshooting Guid e</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>July 2021</title>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Abbreviations and Acronyms</title>
+      <note type="important">
+        <p>Ensure that the below items are followed in preparation for successful Conexxus Mobile
+Payment configuration and implementation.</p>
+      </note>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Before You Begin</title>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+      <p>Before configuring the Conexxus Mobile Payment, ensure the following:</p>
+      <ul>
+        <li>
+          <p>Passport system must be running with V11.01D, Maintenance Pack 1 or later.</p>
+        </li>
+        <li>
+          <p>For using Conexxus V2.0, Passport system must be running on V12.02 or later.</p>
+        </li>
+        <li>
+          <p>Ensure that you have the following site information available: Merchant ID, Host IP</p>
+        </li>
+      </ul>
+      <p>Address, Port Number, Settlement Software Version, QR Prefix Code , and Schema</p>
+      <p>Version .</p>
+      <ul>
+        <li>
+          <p>If the site is on P97 network, contact P97 Support Desk for required information at </p>
+        </li>
+      </ul>
+      <p>800-961-9203 or support@P97.com.</p>
+      <ul>
+        <li>
+          <p>If the site is on non-P97 network, contact the site’s mobile network provider for the</p>
+        </li>
+      </ul>
+      <p>required information.</p>
+      <ul>
+        <li>
+          <p>IT staff/network provider need to ensure that the Host IP Address and Port are open on the</p>
+        </li>
+      </ul>
+      <p>site’s firewall.</p>
+      <ul>
+        <li>
+          <p>Scanners at the workstations are programmed and capable of reading Quick Response</p>
+        </li>
+      </ul>
+      <p>(QR) codes. For Gilbarco ® certified Honeywell Xenon 1900 programming instructions, refer to MDE-5557 Honeywell ® Xenon ™ Scanner Setup/Service Instructions .</p>
+      <ul>
+        <li>
+          <p>Site has a working connection to the mobile host. Excludes dial-up connections.</p>
+        </li>
+      </ul>
+    </sectiondiv>
+    <sectiondiv>
+      <title>Technical Support</title>
+      <p>If you need to verify RAS connection or activate a Passport system feature, contact Gilbarco at  1-800-800-7498. If you need assistance with an upgrade or installation issue, contact Gilbarco at 1-800-743-7501. Be prepared to provide your Authorized Service Contractor (ASC) ID.</p>
+      <p>If the site is a P97 customer that needs support with the Mobile Payment phone application or</p>
+      <p>Loyalty, contact the P97 Support Desk at 1-800-961-9203.</p>
+      <p>If you need assistance with EchoSat SM equipment, contact the EchoSat support desk at  800-393-3246, and select option 1 .</p>
+      <note type="important">
+        <p>Mobile Payment requires close coordination between the mobile host that supports the
+Conexxus standard, Gilbarco, and your store.</p>
+      </note>
+    </sectiondiv>
+    <section>
+      <title>Conexxus Mobile Payment</title>
+      <p>The Passport system’s Mobile Payment feature allows the customer to use a cell phone application to authorize and pay for fuel at the CRIND or inside the store instead of swiping or inserting a payment card or presenting a transponder device.</p>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+      <sectiondiv>
+        <title>What is a User Validation Code for Mobile Payment?</title>
+        <p>A validation code is provided by the mobile application to confirm that the registered consumer is performing the operation. When inside the store, the user presents a QR Code .</p>
+        <p>When fueling outside, the user may be prompted to enter the validation code depending on the application configuration. This schema is called Above Site Payment . In this mode, authorization is provided by the mobile host authorizer, which provides the validation code to the mobile application to be used during the transaction.</p>
+        <p>In terms of functionality and behavior , the most important variation is that there will not be a payment card swipe when the consumer presents mobile tender . All of these transactions are settled through the Mobile host, thus the reports for Mobile network are the same as in other networks.</p>
+        <p>The loyalty portion of the transaction remains working as usual for Conexxus schema V1.0.</p>
+        <p>From site and consumer’s perspective, there is no substantial functional changes, except that the user may choose the loyalty program in the mobile application and not in the CRIND.</p>
+        <p>For Conexxus schema V2.0, along with the loyalty program which is configured at the</p>
+        <p>Manager Workstation (MWS), the customer can receive loyalty discounts awarded by the mobile payment application. This type of loyalty discount is referred to as Above Site</p>
+        <p>Loyalty . Above site loyalty discounts can be applied on all dry stock items, postpay transactions and prepay transactions at the time payment is initiated. In case of outside transactions, it can be applied when payment is initiated as well as after fueling and before payment finalization.</p>
+        <p>The following table lists the components of Conexxus 2.0 and specifies whether they are currently supported by Passport.</p>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Router Configuration</title>
+      <p>For sites using an Acumera Secure Zone Router (SZR), call 1-800-743-7501 (and select</p>
+      <p>Option 3 , then Option 1 ) to provide the Conexxus Destination IP and Port to Acumera for configuration of the SZR. Sites using a Managed Network Service Provider (MNSP) should contact their MNSP directly to have their router configured.</p>
+    </section>
+    <section>
+      <title>Feature Activation</title>
+      <p>
+        <menucascade>
+          <uicontrol>After completing the on-boarding process with POS and the Payment Network, you must activate the Mobile Payment feature in MWS</uicontrol>
+          <uicontrol>Feature Activation . This requires an ASC on site to contact the Gilbarco Help Desk for a Site Code that includes the new Mobile Payment feature activation. After activating the Mobile Payment feature, the Passport system allows access to the Mobile Payment functionality.</uicontrol>
+        </menucascade>
+      </p>
+      <p>You must sign off and sign on after feature activation to effectively have the feature working.</p>
+      <p>Contact the Gilbarco POS Help Desk for more information.</p>
+      <note type="note">
+        <p>Note: Feature Activation will activate both FD Mobile and Conexxus Mobile.</p>
+      </note>
+      <fig>
+        <title>Mobile Payment Feature Activation</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Mobile Payment Feature Activation]</alt>
+        </image>
+      </fig>
+      <note type="important">
+        <p>Much of the programming requires information from the Mobile Payment network
+provider. Contact mobile provider to get the configuration information.</p>
+      </note>
+    </section>
+    <section>
+      <title>Mobile Payment Configuration in MWS</title>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+      <p>To configure and enable Mobile Payment, proceed as follows:</p>
+      <steps>
+        <step>
+          <cmd>From the MWS main screen, go to Set Up &gt; Network Menu &gt; Mobile Payment &gt; Mobile</cmd>
+        </step>
+      </steps>
+      <p>Payment Configuration . The Mobile Payment Configuration screen opens.</p>
+      <fig>
+        <title>Mobile Payment Configuration Screen - General Tab</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Mobile Payment Configuration Screen - General Tab]</alt>
+        </image>
+      </fig>
+      <ul>
+        <li>
+          <p></p>
+        </li>
+      </ul>
+      <p>The following are the configuration fields and their description:</p>
+      <fig>
+        <title>Mobile Payment Configuration Screen - Conexxus QR Code Prefixes</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Mobile Payment Configuration Screen - Conexxus QR Code Prefixes]</alt>
+        </image>
+      </fig>
+      <p>The QR Code is displayed in the customer’s mobile application and is scanned at the POS to use mobile for payment inside the store. The QR Code Prefixes are the first few characters of the QR Code and identify the mobile host.</p>
+      <ul>
+        <li>
+          <p>None (default)</p>
+        </li>
+        <li>
+          <p>Lenient</p>
+        </li>
+        <li>
+          <p>Strict</p>
+        </li>
+      </ul>
+      <p>The following table contains the Mobile Payment Configuration - Conexxus QR Code</p>
+      <p>Prefixes Tab fields and their descriptions:</p>
+      <fig>
+        <title>Mobile Payment Configuration Screen - EMVCo QR Codes</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Mobile Payment Configuration Screen - EMVCo QR Codes]</alt>
+        </image>
+      </fig>
+      <p>The following table shows the configuration field and its description:</p>
+      <steps>
+        <step>
+          <cmd>After completing all fields, select Save to save the configuration to the Passport system database and exit the configuration screen, or configure the Local Mobile Discounts.</cmd>
+        </step>
+      </steps>
+      <sectiondiv>
+        <title>Local Mobile Discounts Configuration in MWS</title>
+        <p>Beginning with V20.04, the Passport system supports Local Mobile Discounts, which allows the merchant to configure local discounts based on the underlying card associated with the mobile payment application.</p>
+        <p>
+          <menucascade>
+            <uicontrol>The merchant can configure new Mobile Local Discount Codes and associate them with the existing Fuel Discount Groups (already created in MWS</uicontrol>
+            <uicontrol>Fuel</uicontrol>
+            <uicontrol>Fuel Discount</uicontrol>
+          </menucascade>
+        </p>
+        <p>
+          <menucascade>
+            <uicontrol>Configuration</uicontrol>
+            <uicontrol>Fuel Discount Groups ).</uicontrol>
+          </menucascade>
+        </p>
+        <p>To configure the Mobile Local Discounts, proceed as follows:</p>
+        <steps>
+          <step>
+            <cmd>Go to MWS &gt; Set Up &gt; Network Menu &gt; Mobile Payment &gt; Mobile Payment</cmd>
+          </step>
+        </steps>
+        <p>Configuration .</p>
+        <steps>
+          <step>
+            <cmd>Go to Default Local Fuel Discount tab and set a default local fuel discount by linking a Fuel</cmd>
+          </step>
+        </steps>
+        <p>Discount Group from the drop-down menu. This default group will be used if the mobile provider informs an unknown discount code during the transaction.</p>
+        <fig>
+          <title>Local Fuel Discounts Configuration Screen - Default Local Fuel Discount Tab</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Local Fuel Discounts Configuration Screen - Default Local Fuel Discount Tab]</alt>
+          </image>
+        </fig>
+        <steps>
+          <step>
+            <cmd>Go to Local Fuel Discounts tab to add and configure the Local Fuel Discounts by associating with the existing discount groups. The list on the left displays those discounts. The fields on the right give the details and allow the association through the Fuel Discount Group field.</cmd>
+          </step>
+        </steps>
+        <fig>
+          <title>Local Fuel Discounts Configuration Screen - Local Fuel Discounts Tab</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Local Fuel Discounts Configuration Screen - Local Fuel Discounts Tab]</alt>
+          </image>
+        </fig>
+        <steps>
+          <step>
+            <cmd>After updating the configuration, select Save .</cmd>
+          </step>
+        </steps>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Network Journal Report</title>
+        <p>Although not a specific Mobile Payment report, Passport includes Mobile Payment-initiated transactions in the Network Journal Report, detailing the “Conexxus Mobile Network” value in the Journal NETWORK field.</p>
+        <p>This report shows network journal entries such as settlement and communication issues, allowing to search and pre-filter by different criteria, such as Date and Time, Exceptions,</p>
+        <p>Source, Journal Type, and Journal Text. The merchant or store manager can use the Network</p>
+        <p>Journal Report as an aid in searching for mobile-initiated transactions.</p>
+        <fig>
+          <title>Mobile Payment Store and Forward Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Store and Forward Report]</alt>
+          </image>
+        </fig>
+        <fig>
+          <title>Network Journal Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Network Journal Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Mobile Payment Reports</title>
+      <p>Passport supports the following Mobile Payment reports with Conexxus schema V1.0:</p>
+      <ul>
+        <li>
+          <p>Mobile Payment Configuration Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Current Local Totals Summary Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Current Transaction Detail Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Transaction Detail Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Current Unpaid Transactions Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Unpaid Transactions Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Store and Forward Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Settlement Report</p>
+        </li>
+        <li>
+          <p>Mobile Host Discount Summary Report</p>
+        </li>
+      </ul>
+      <p>In addition to the reports listed above, Passport supports the following Mobile Payment reports with Conexxus schema V2.0:</p>
+      <ul>
+        <li>
+          <p>Mobile Payment Above Site Loyalty Report</p>
+        </li>
+        <li>
+          <p>Mobile Payment Above Site Loyalty Details Report</p>
+        </li>
+      </ul>
+      <p>The following are descriptions and samples of these reports. All mobile transactions are settled through the Mobile host and will be included on its own reports and settlement. In specific loyalty reports, the transactions may be marked with an “M” to indicate they went through mobile authorizer.</p>
+      <sectiondiv>
+        <title>Mobile Payment Configuration</title>
+        <p>The Mobile Pay Configuration Report contains the programming information found in </p>
+        <p>
+          <menucascade>
+            <uicontrol>MWS</uicontrol>
+            <uicontrol>Set Up</uicontrol>
+            <uicontrol>Network Menu</uicontrol>
+            <uicontrol>Mobile Payment</uicontrol>
+            <uicontrol>Mobile Payment Configuration .</uicontrol>
+          </menucascade>
+        </p>
+        <fig>
+          <title>Mobile Payment Configuration Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Configuration Report]</alt>
+          </image>
+        </fig>
+        <table frame="all">
+          <tgroup cols="1">
+            <colspec colname="col1" colnum="1"/>
+            <thead>
+              <row>
+                <entry colname="col1">*Any S&amp;F transactions that were outstanding when Passport system closed the shift will be sent to the host when communication is restored. To retrieve information on the current pending transactions, print the Mobile Payment Store and Forward Report. *Unpaid transactions on this day period were not approved by the host and require manual processing. To retrieve information on these transactions, print the Mobile Payment Current Unpaid Transactions Report.</entry>
+              </row>
+            </thead>
+            <tbody>
+              <row>
+                <entry></entry>
+              </row>
+            </tbody>
+          </tgroup>
+        </table>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Current Local Totals Summary Report</title>
+        <p>The Mobile Payment Current Local Totals Summary Report contains information on Mobile</p>
+        <p>Payment network completed, store and forward, and unpaid transactions, as well as informational notes regarding the store and forward and unpaid transactions. The report is for the current open Mobile Payment network day.</p>
+        <fig>
+          <title>Mobile Payment Current Local Totals Summary Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Current Local Totals Summary Report]</alt>
+          </image>
+        </fig>
+        <p>The following are the fields and their description:</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Current Transaction Detail Report</title>
+        <p>The Mobile Payment Current Transaction Detail Report contains information on transactions completed through the Mobile Payment network in the current open network day.</p>
+        <p>The S&amp;F informational text prints at the bottom of the report only if transactions are in the</p>
+        <p>Store and Forward queue at the time the Passport system generates the report. The unpaid information text prints at the bottom of the report only if unpaid transactions occurred during the report period.</p>
+        <fig>
+          <title>Mobile Payment Current Transaction Detail Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Current Transaction Detail Report]</alt>
+          </image>
+        </fig>
+        <p>The following are the fields and their description:</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Transaction Detail Report</title>
+        <p>The Mobile Payment Transaction Detail Report contains information on transactions completed through the Mobile Payment network in a closed network day. This report consists of two sections: detail lines (two lines for each transaction) and summary totals.</p>
+        <p>The S&amp;F informational text prints at the bottom of the report only if transactions were in the</p>
+        <p>Store and Forward queue at network closing. The unpaid information text prints at the bottom of the report only if unpaid transactions occurred during the report period.</p>
+        <fig>
+          <title>Mobile Payment Transaction Detail Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Transaction Detail Report]</alt>
+          </image>
+        </fig>
+        <p>The following are the fields and their description:</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Current Unpaid Transactions Report</title>
+        <p>The Mobile Payment Current Unpaid Transactions Report contains information on transactions initiated through the Mobile Payment network but declined at completion during the current open network day. This report consists of two sections: detail lines (two lines for each transaction) and summary transaction totals.</p>
+        <fig>
+          <title>Mobile Payment Current Unpaid Transactions Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Current Unpaid Transactions Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Unpaid Transactions Report</title>
+        <p>The Mobile Pay Unpaid Transactions Report contains information on transactions initiated through the Mobile Pay network but declined at completion during a closed network day. This report consists of two sections: detail lines (two lines for each transaction) and summary transaction totals. The site needs to contact the Mobile provider about clearing these unpaid sales.</p>
+        <fig>
+          <title>Mobile Payment Unpaid Transactions Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Unpaid Transactions Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Store and Forward Report</title>
+        <p>The Mobile Payment Store and Forward Report contains information on Mobile Payment transactions that were authorized but not completed at the time of report generation.</p>
+        <fig>
+          <title>Mobile Payment Store and Forward Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Store and Forward Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Pay Settlement Report</title>
+        <p>The Mobile Payment Settlement Report contains information on the status and comparison of totals between the Passport system and Mobile Payment network when the network period closes.</p>
+        <fig>
+          <title>Mobile Payment Settlement Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Settlement Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Above Site Loyalty Discount Report</title>
+        <note type="note">
+          <p>Note: This report is only available for schema V2.0.</p>
+        </note>
+        <p>The Mobile Payment Above Site Loyalty Discount Report is similar to Loyalty Discount</p>
+        <p>Report. This report will contain items that have received a loyalty discount from the network host in a closed network day. These loyalty discounts are not configured on Passport site. This report consists of five sections:</p>
+        <ul>
+          <li>
+            <p>Discounts received before fueling (Pre-paid and Outside)</p>
+          </li>
+          <li>
+            <p>Discounts received after fueling (Postpaid)</p>
+          </li>
+          <li>
+            <p>Total discounts received in fuel transactions</p>
+          </li>
+          <li>
+            <p>Discounts received on dry stock items</p>
+          </li>
+          <li>
+            <p>Transaction level discounts</p>
+          </li>
+        </ul>
+        <p>
+          <menucascade>
+            <uicontrol>The information within the Fuel Grade column includes the fuel grade name and NACS product code as programmed in MWS</uicontrol>
+            <uicontrol>Set Up</uicontrol>
+            <uicontrol>Forecourt</uicontrol>
+            <uicontrol>Forecourt Installation.</uicontrol>
+          </menucascade>
+        </p>
+        <fig>
+          <title>Mobile Payment Above Site Loyalty Discount Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Above Site Loyalty Discount Report]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Mobile Payment Above Site Loyalty Transaction Detail Report</title>
+        <note type="note">
+          <p>Note: This report is only available for schema V2.0.</p>
+        </note>
+        <p>The Mobile Payment Above Site Loyalty Transaction Detail Report is similar to Loyalty</p>
+        <p>Transaction Detail Report. This report will contain items which have received a loyalty discount from the network host in the open network day. These loyalty discounts are not configured on Passport site. This report consists of five sections:</p>
+        <ul>
+          <li>
+            <p>Discounts received before fueling (Pre-paid and Outside)</p>
+          </li>
+          <li>
+            <p>Discounts received after fueling (Postpaid)</p>
+          </li>
+          <li>
+            <p>Total discounts received in fuel transactions</p>
+          </li>
+          <li>
+            <p>Discounts received on dry stock items</p>
+          </li>
+          <li>
+            <p>Transaction level discounts</p>
+          </li>
+        </ul>
+        <p>
+          <menucascade>
+            <uicontrol>The information within the Fuel Grade column includes the fuel grade name and NACS product code as programmed in MWS</uicontrol>
+            <uicontrol>Set Up</uicontrol>
+            <uicontrol>Forecourt</uicontrol>
+            <uicontrol>Forecourt Installation .</uicontrol>
+          </menucascade>
+        </p>
+        <fig>
+          <title>Mobile Payment Above Site Loyalty Transaction Detail Report</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Above Site Loyalty Transaction Detail Report]</alt>
+          </image>
+        </fig>
+        <note type="important">
+          <p>The following section describes the generic fueling sequence with mobile application.
+Site manager is to check with mobile application provider for updated and real interaction
+details.</p>
+        </note>
+        <note type="important">
+          <p>Ensure that your loyalty card masks are set up in order to process the loyalty number
+that consumer may enter in his application.</p>
+        </note>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>CRIND Functions</title>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+      <note type="important">
+        <p>IMPORTANT INFORMATION</p>
+      </note>
+      <sectiondiv>
+        <title>Typical Fueling Sequence</title>
+        <p>For a typical fueling sequence, proceed as follows:</p>
+        <steps>
+          <step>
+            <cmd>Consumer stops at the pump, selects Pay for Fuel in his mobile application.</cmd>
+          </step>
+          <step>
+            <cmd>The consumer then selects pump or scans the QR code on the pump, and optionally selects a car wash if receives a car wash prompt.</cmd>
+          </step>
+        </steps>
+        <p>Depending on the specific mobile application being used the consumer may indicate which loyalty program to use.</p>
+        <steps>
+          <step>
+            <cmd>If the mobile provider has this feature enabled, consumer enters the validation code displayed in the mobile application to confirm that he is at the pump being authorized. Consumer has three attempts to correctly input the validation code.</cmd>
+          </step>
+          <step>
+            <cmd>Consumer begins fueling. During the fueling process, Passport will send messages to mobile authorizer, so the mobile application informs the consumer about current status, final amount of sale, fuel grade, volume etc. If Conexxus schema 2.0 is used, then above site discounts will be received by Passport via mobile authorization response in price adjustment tag. Multiple price adjustments can be received for the same item.</cmd>
+          </step>
+        </steps>
+        <p>Above site discounts will be applied after fueling for outside transactions. In that case, discounts that have been applied before fueling will be informed to the host in the loyalty award request with “rewards applied” set as true. Any additional discounts will be returned in the loyalty award response with “rewards applied” set as false and sales tag set between  900-904. These rewards will be applied as transaction level discounts and reported in the finalize request as 913 sales tag.</p>
+        <p>When fueling ends, Passport may print a receipt according to customer preference. For more information, refer to “Mobile Payment Customer Receipts” on page 26.</p>
+        <note type="important">
+          <p>- Once the consumer lifts the handle on the dispenser, he cannot cancel the transaction
+from the mobile application.
+- Once the pump is in use for a transaction, it cannot be reserved by another consumer.</p>
+        </note>
+        <ul>
+          <li>
+            <p>Once the consumer lifts the handle on the dispenser, he cannot cancel the transaction</p>
+          </li>
+          <li>
+            <p>Once the pump is in use for a transaction, it cannot be reserved by another consumer.</p>
+          </li>
+        </ul>
+        <note type="important">
+          <p>IMPORTANT INFORMATION</p>
+        </note>
+        <note type="note">
+          <p>Note: Passport system does not allow Mobile Payment after manual (swiped) loyalty is</p>
+        </note>
+        <p>validated or a payment card is swiped.</p>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Receipts</title>
+        <p>CRIND receipts clearly display data related to the mobile transaction. The word “MOBILE” precedes the authorization and sequence number in receipts of mobile transactions. For example, see Figure 19.</p>
+        <note type="note">
+          <p>Note: The mobile application has a setting that the user can configure, stating whether to</p>
+        </note>
+        <p>have a printed receipt at the CRIND.</p>
+        <fig>
+          <title>Mobile Payment Transaction Receipt with Conexxus schema V2.0</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Mobile Payment Transaction Receipt with Conexxus schema V2.0]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>CWS Mobile Payment Transaction</title>
+      <p>
+        <menucascade>
+          <uicontrol>The cashier performs a Mobile Payment sale by selecting Tender</uicontrol>
+          <uicontrol>Card . At this moment, the barcode scanner can scan the QR code from mobile application.</uicontrol>
+        </menucascade>
+      </p>
+      <fig>
+        <title>Cashier Workstation (CWS) - Card Button</title>
+        <image href="" placement="inline">
+          <alt>[IMAGE — Cashier Workstation (CWS) - Card Button]</alt>
+        </image>
+      </fig>
+      <p>When the customer presents the QR code on his application, the cashier scans the code in order to identify the consumer for this transaction and the process continues as usual with the authorization.</p>
+      <sectiondiv>
+        <title>Split Payment</title>
+        <p>There are no limitations regarding which form of payment is selected first by cashier, although split payments does not apply to fuel pre-pays.</p>
+        <fig>
+          <title>Scanning QR Code on Mobile Application</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Scanning QR Code on Mobile Application]</alt>
+          </image>
+        </fig>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Mobile Payment Customer Receipts</title>
+      <p>The mobile application has its own settings regarding receipt printing (consumer configures it) and is capable of receiving the customer receipt instead of POS or CRIND printing the receipt.</p>
+      <p>The customer may receive a printed receipt from the POS or CRIND, an electronic receipt through the mobile application, or no receipt. CRIND will not prompt the customer to print receipts.</p>
+      <p>
+        <menucascade>
+          <uicontrol>If the Mobile Payment transaction occurs at a dispenser for which Token Attendant is active, the receipt printing parameters in the MWS</uicontrol>
+          <uicontrol>Fuel</uicontrol>
+          <uicontrol>Site Options</uicontrol>
+          <uicontrol>Attendant Options tab under the Attendant Token Options section determine receipt printing behavior at the dispenser.</uicontrol>
+        </menucascade>
+      </p>
+      <note type="note">
+        <p>Note: Receipt reprints are available at the CWS.</p>
+      </note>
+    </section>
+    <section>
+      <title>Troubleshooting</title>
+      <sectiondiv>
+        <title>Verifying Router Connectivity</title>
+        <p>To verify router connectivity, proceed as follows:</p>
+        <steps>
+          <step>
+            <cmd>Open the command prompt on the Enhanced Dispenser Hub (EDH).</cmd>
+          </step>
+          <step>
+            <cmd>From the command prompt, type telnet XX.XX.XX.XX XX (the host IP address and port number).</cmd>
+          </step>
+          <step>
+            <cmd>Press Enter .</cmd>
+          </step>
+        </steps>
+        <fig>
+          <title>Example of a Successful Telnet to IP Host and Port Number</title>
+          <image href="" placement="inline">
+            <alt>[IMAGE — Example of a Successful Telnet to IP Host and Port Number]</alt>
+          </image>
+        </fig>
+        <p>A flashing cursor in the top-left part of the command prompt window shows that you have a socket connection.</p>
+        <p>If you fail to get a socket connection using an Acumera SZR:</p>
+        <ul>
+          <li>
+            <p>Ensure that the site’s IT admin has allowed proper egress.</p>
+          </li>
+          <li>
+            <p>Call Technical Assistance Center (TAC) to confirm the IP/Port has been programmed</p>
+          </li>
+        </ul>
+        <p>correctly and for any additional troubleshooting.</p>
+        <p>If you fail to get a socket connection using MNSP, contact the MNSP for assistance.</p>
+        <steps>
+          <step>
+            <cmd>Close the command prompt window.</cmd>
+          </step>
+        </steps>
+      </sectiondiv>
+    </section>
+    <section>
+      <title>Mobile Payment Reference Sheet</title>
+      <p>Update the following fields with the required details and leave the sheet with the site personnel for future reference.</p>
+      <sectiondiv>
+        <title>Merchant ID: ____________________________________________</title>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Host IP Address: _________________________________________</title>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Port Number: ____________________________________________</title>
+      </sectiondiv>
+      <sectiondiv>
+        <title>Settlement Software Version: _______________________________</title>
+      </sectiondiv>
+    </section>
+  </taskbody>
+</task>
