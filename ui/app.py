@@ -42,267 +42,25 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---------------------------------------------------------------------------
-# Theme state
-# ---------------------------------------------------------------------------
 
-if "light_mode" not in st.session_state:
-    st.session_state.light_mode = False
 
-_DARK_CSS = """
+# Minimal CSS — cards and badges only; system theme handles everything else
+st.markdown("""
 <style>
-  /* ── Material dark theme ──────────────────────────────────────────────
-     Background:  #121212  (base surface — not pure black)
-     Surface dp1: #1E1E1E  (cards, sidebar)
-     Surface dp4: #252525  (inputs, code blocks)
-     Surface dp8: #2C2C2C  (elevated panels)
-     Primary text:    rgba(255,255,255,0.87)  — #DEDEDE
-     Secondary text:  rgba(255,255,255,0.60)  — #9E9E9E
-     Disabled text:   rgba(255,255,255,0.38)
-     Accent (blue):   #82B1FF  (desaturated, not vibrant)
-     Border:          #2C2C2C → #333333
-  ─────────────────────────────────────────────────────────────────────── */
-
-  /* App shell */
-  .stApp {
-    background-color: #121212;
-    color: rgba(255,255,255,0.87);
-  }
-
-  /* Sidebar — dp1 surface */
-  section[data-testid="stSidebar"] {
-    background-color: #1E1E1E;
-    border-right: 1px solid #2C2C2C;
-  }
-  section[data-testid="stSidebar"] p,
-  section[data-testid="stSidebar"] li,
-  section[data-testid="stSidebar"] span,
-  section[data-testid="stSidebar"] label {
-    color: rgba(255,255,255,0.87) !important;
-  }
-  section[data-testid="stSidebar"] .stCaption {
-    color: rgba(255,255,255,0.60) !important;
-  }
-
-  /* Main content text */
-  p, li, span, label, .stMarkdown {
-    color: rgba(255,255,255,0.87);
-  }
-  .stCaption, small, .stCaption p {
-    color: rgba(255,255,255,0.60) !important;
-  }
-
-  /* Tabs — dp1 surface */
-  .stTabs [data-baseweb="tab-list"] {
-    background-color: #1E1E1E;
-    border-radius: 8px;
-    border: 1px solid #2C2C2C;
-    gap: 4px;
-    padding: 4px;
-  }
-  .stTabs [data-baseweb="tab"] {
-    color: rgba(255,255,255,0.60);
-    border-radius: 6px;
-  }
-  .stTabs [aria-selected="true"] {
-    color: rgba(255,255,255,0.87) !important;
-    background-color: #252525 !important;
-    border-bottom: 2px solid #82B1FF !important;
-  }
-  .stTabs [data-baseweb="tab"]:hover {
-    color: rgba(255,255,255,0.87) !important;
-    background-color: #252525 !important;
-  }
-
-  /* Code blocks — dp4 surface */
-  .stCodeBlock, pre, code {
-    background-color: #1E1E1E !important;
-    color: rgba(255,255,255,0.87) !important;
-    border: 1px solid #2C2C2C !important;
-    border-radius: 6px !important;
-  }
-
-  /* Metrics — dp1 surface */
-  [data-testid="metric-container"] {
-    background-color: #1E1E1E;
-    border: 1px solid #2C2C2C;
-    border-radius: 8px;
-    padding: 14px;
-  }
-  [data-testid="metric-container"] label {
-    color: rgba(255,255,255,0.60) !important;
-    font-size: 0.8em;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  [data-testid="metric-container"] [data-testid="metric-value"] {
-    color: rgba(255,255,255,0.87) !important;
-  }
-
-  /* Expanders — dp1 surface */
-  details, [data-testid="stExpander"] {
-    background-color: #1E1E1E !important;
-    border: 1px solid #2C2C2C !important;
-    border-radius: 8px !important;
-  }
-  [data-testid="stExpander"] summary {
-    color: rgba(255,255,255,0.87) !important;
-  }
-
-  /* Inputs — dp4 surface */
-  input, textarea, [data-baseweb="input"], [data-baseweb="textarea"] {
-    background-color: #252525 !important;
-    color: rgba(255,255,255,0.87) !important;
-    border: 1px solid #333333 !important;
-    border-radius: 6px !important;
-  }
-  input::placeholder, textarea::placeholder {
-    color: rgba(255,255,255,0.38) !important;
-  }
-  input:focus, textarea:focus {
-    border-color: #82B1FF !important;
-    box-shadow: 0 0 0 2px rgba(130,177,255,0.15) !important;
-  }
-
-  /* Select box */
-  [data-baseweb="select"] {
-    background-color: #252525 !important;
-    border: 1px solid #333333 !important;
-    border-radius: 6px !important;
-  }
-  [data-baseweb="select"] span {
-    color: rgba(255,255,255,0.87) !important;
-  }
-
-  /* File uploader */
-  [data-testid="stFileUploader"] {
-    background-color: #1E1E1E;
-    border: 1px dashed #333333;
-    border-radius: 8px;
-  }
-
-  /* Buttons */
-  .stButton button {
-    background-color: #252525;
-    color: rgba(255,255,255,0.87);
-    border: 1px solid #333333;
-    border-radius: 6px;
-  }
-  .stButton button:hover {
-    background-color: #2C2C2C;
-    border-color: #82B1FF;
-    color: #82B1FF;
-  }
-
-  /* Divider */
-  hr { border-color: #2C2C2C; }
-
-  /* Alert / info boxes */
-  [data-testid="stAlert"] {
-    background-color: #1E1E1E !important;
-    border-radius: 8px !important;
-    border-left-width: 3px !important;
-  }
-
-  /* Topic cards — dp1 surface, subtle border */
   .topic-card {
-    background: #1E1E1E;
-    border: 1px solid #2C2C2C;
+    border: 1px solid rgba(128,128,128,0.25);
     border-radius: 8px;
     padding: 12px 16px;
     margin-bottom: 6px;
     transition: border-color 0.15s ease;
   }
-  .topic-card:hover {
-    border-color: #82B1FF;
-  }
-  .topic-card strong {
-    color: rgba(255,255,255,0.87);
-  }
-
-  /* Type badges — desaturated colours per Material dark spec */
-  .badge-task {
-    background: rgba(129,199,132,0.15);
-    color: #81C784;
-    border-radius: 4px; padding: 2px 8px; font-size: 0.75em;
-    font-weight: 600; letter-spacing: 0.03em;
-  }
-  .badge-concept {
-    background: rgba(130,177,255,0.15);
-    color: #82B1FF;
-    border-radius: 4px; padding: 2px 8px; font-size: 0.75em;
-    font-weight: 600; letter-spacing: 0.03em;
-  }
-  .badge-reference {
-    background: rgba(255,204,128,0.15);
-    color: #FFCC80;
-    border-radius: 4px; padding: 2px 8px; font-size: 0.75em;
-    font-weight: 600; letter-spacing: 0.03em;
-  }
-  .badge-topic {
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.60);
-    border-radius: 4px; padding: 2px 8px; font-size: 0.75em;
-    font-weight: 600; letter-spacing: 0.03em;
-  }
+  .topic-card:hover { border-color: rgba(128,128,128,0.6); }
+  .badge-task      { background:rgba(46,125,50,0.15);  color:#2E7D32; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
+  .badge-concept   { background:rgba(21,101,192,0.12); color:#1565C0; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
+  .badge-reference { background:rgba(230,81,0,0.12);   color:#E65100; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
+  .badge-topic     { background:rgba(128,128,128,0.12);color:#757575; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
 </style>
-"""
-
-_LIGHT_CSS = """
-<style>
-  /* Material light theme */
-  .stApp { background-color: #FAFAFA; color: rgba(0,0,0,0.87); }
-
-  section[data-testid="stSidebar"] {
-    background-color: #F5F5F5;
-    border-right: 1px solid #E0E0E0;
-  }
-
-  .stTabs [data-baseweb="tab-list"] {
-    background-color: #F5F5F5;
-    border-radius: 8px;
-    border: 1px solid #E0E0E0;
-    gap: 4px; padding: 4px;
-  }
-  .stTabs [data-baseweb="tab"] { color: rgba(0,0,0,0.60); border-radius: 6px; }
-  .stTabs [aria-selected="true"] {
-    color: rgba(0,0,0,0.87) !important;
-    background-color: #FFFFFF !important;
-    border-bottom: 2px solid #1565C0 !important;
-  }
-
-  [data-testid="metric-container"] {
-    background-color: #FFFFFF;
-    border: 1px solid #E0E0E0;
-    border-radius: 8px; padding: 14px;
-  }
-  [data-testid="metric-container"] label {
-    color: rgba(0,0,0,0.60) !important;
-    font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em;
-  }
-
-  details, [data-testid="stExpander"] {
-    background-color: #FFFFFF !important;
-    border: 1px solid #E0E0E0 !important;
-    border-radius: 8px !important;
-  }
-
-  .topic-card {
-    background: #FFFFFF;
-    border: 1px solid #E0E0E0;
-    border-radius: 8px; padding: 12px 16px; margin-bottom: 6px;
-    transition: border-color 0.15s ease;
-  }
-  .topic-card:hover { border-color: #1565C0; }
-
-  .badge-task      { background:#E8F5E9; color:#2E7D32; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-concept   { background:#E3F2FD; color:#1565C0; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-reference { background:#FFF8E1; color:#E65100; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-topic     { background:#F5F5F5; color:rgba(0,0,0,0.60); border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-</style>
-"""
-
-st.markdown(_LIGHT_CSS if st.session_state.light_mode else _DARK_CSS, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,10 +95,6 @@ with st.sidebar:
     st.title("📄 DITA Converter")
     st.caption("PDF & DOCX → DITA 2.0 XML")
 
-    mode_label = "☀️ Light Mode" if not st.session_state.light_mode else "🌙 Dark Mode"
-    if st.button(mode_label, use_container_width=True):
-        st.session_state.light_mode = not st.session_state.light_mode
-        st.rerun()
 
     st.divider()
     st.subheader("⚙️ Configuration")
