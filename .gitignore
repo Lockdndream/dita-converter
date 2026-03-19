@@ -1,10 +1,41 @@
+# Python
 __pycache__/
 *.pyc
-.streamlit/
-.venv/
-venv/
+*.pyo
+*.pyd
+.Python
 *.egg-info/
 .pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/
+
+# Tool output
 uploads/
 output/
+*.dita
 .env
+
+# Build artefacts
+build/_pyinstaller_work/
+dist/_pyinstaller_work/
+# Note: dist/DITAConverter.exe IS committed (tracked by Git LFS)
+# Only the PyInstaller working directory is excluded
+
+# Certificates — NEVER commit private keys
+*.pfx
+*.p12
+
+# Zip files (used during development, not part of repo)
+*.zip
+todita_*/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
