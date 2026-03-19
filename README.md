@@ -17,22 +17,20 @@ A lightweight, open-source proof-of-concept that converts text-based **PDF** and
 
 ## Quick Start
 
-### Prerequisites
+### Option A — Windows Executable (no Python required)
 
-- Python 3.11
-- pip
+Download `DITAConverter.exe` from the `dist/` folder in this repository. Double-click to run — a browser window opens automatically at `http://localhost:8501`. Close the console window to stop the tool.
 
-### Install
+> **Note for IT:** The exe is unsigned by default. See `build/IT_Certificate_Guide.md` for instructions on generating a self-signed certificate and deploying it via Group Policy so Windows does not show a SmartScreen warning.
+
+### Option B — Run from Source
+
+**Prerequisites:** Python 3.11, pip
 
 ```bash
 git clone https://github.com/Lockdndream/dita-converter.git
 cd dita-converter
 pip install -r requirements.txt
-```
-
-### Run the UI
-
-```bash
 streamlit run ui/app.py
 ```
 
@@ -82,6 +80,7 @@ Upload PDF or DOCX
 | **Image support (DOCX)** | Provide the extracted `media/` folder path to link images in DITA `<image>` elements |
 | **Validation report** | Per-topic well-formedness check with error, warning, and content stats |
 | **DITA 2.0** | Full OASIS DITA 2.0 namespace and DOCTYPE on all output |
+| **Windows exe** | Standalone executable — no Python install required on end-user machines |
 
 ---
 
@@ -95,19 +94,47 @@ dita-converter/
 │   ├── mapper.py          # Content Tree + YAML rules → Annotated Tree
 │   ├── generator.py       # Annotated Tree → DITA 2.0 XML + .ditamap
 │   └── validator.py       # XML validation + report per topic
+├── build/
+│   ├── launcher.py        # Exe entry point (Streamlit bootstrap)
+│   ├── build.py           # PyInstaller build script
+│   ├── dita_converter.spec # PyInstaller spec file
+│   └── IT_Certificate_Guide.md  # Self-signed cert + GPO deployment guide
 ├── config/
 │   └── mapping_rules.yaml # Style mapping rules (editable, no code change needed)
+├── dist/
+│   └── DITAConverter.exe  # Windows executable (tracked via Git LFS)
 ├── ui/
 │   └── app.py             # Streamlit web application
 ├── tests/
 ├── docs/                  # Architecture, Source of Truth, Project Plan, Services
 ├── sample_inputs/         # Reference PDFs/DOCX for mapping calibration
 ├── runtime.txt            # Pins Python 3.11 for Streamlit Cloud
+├── .gitattributes         # Git LFS tracking for .exe files
 ├── .gitignore
 ├── CHANGELOG.md
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## Building the Executable
+
+Requires Python 3.11 and all dependencies installed on a Windows machine.
+
+```cmd
+py -3.11 build\build.py
+```
+
+Output: `dist\DITAConverter.exe` (~180MB, all dependencies bundled).
+
+To sign the exe (removes SmartScreen warning on domain machines):
+
+```cmd
+py -3.11 build\build.py --sign --cert "C:\Certs\DITAConverter.pfx"
+```
+
+See `build/IT_Certificate_Guide.md` for the full certificate setup process.
 
 ---
 
@@ -205,6 +232,7 @@ Built using a four-role development workflow (meta-layer, not runtime):
 | Rule-based mapping | LLM-assisted mapping for ambiguous content → v3 |
 | Images require manual extraction (DOCX) | Auto-extraction on upload → v2 |
 | No DITA validation against full DTD | DTD-aware validation → v2 |
+| Exe built on Windows only | Cross-platform packaging → v2 |
 
 ---
 
@@ -217,6 +245,7 @@ Built using a four-role development workflow (meta-layer, not runtime):
 | PyYAML | 6.x | Mapping rules config |
 | lxml | 5.x | XML generation, validation, ditamap |
 | streamlit | 1.35.x | Web UI |
+| protobuf | 3.20.3 | Streamlit internal messaging (pinned for Python 3.11 compatibility) |
 
 All dependencies are open-source (MIT/BSD/Apache 2.0).
 **Total runtime cost: $0.00** — no API keys, no cloud services.
@@ -227,7 +256,7 @@ All dependencies are open-source (MIT/BSD/Apache 2.0).
 
 | Version | Focus |
 |---|---|
-| v1.1 | ✅ DITA 2.0 · Multi-topic · .ditamap · Selective export · Image support |
+| v1.1 | ✅ DITA 2.0 · Multi-topic · .ditamap · Selective export · Image support · Windows exe |
 | v2.0 | Full DTD validation · Auto DOCX image extraction · Scanned PDF OCR |
 | v2.1 | DITA map editor in UI · Drag-to-reorder topics |
 | v3.0 | LLM-assisted mapping for ambiguous content |
