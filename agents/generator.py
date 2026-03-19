@@ -6,11 +6,15 @@ Serialises the annotated Content Tree into valid DITA 2.0 XML using lxml.
 
 NEW in S-08:
   - DITA 2.0 namespace and DOCTYPE
-  - Multi-topic splitting: each H1 boundary (section_title) becomes a
-    separate topic file. Returns list of (filename, xml_string) tuples.
-  - Single-topic documents return a list of one tuple.
+  - Multi-topic splitting: each H1 boundary produces a separate topic file.
+  - Returns list of (filename, xml_string) tuples.
 
-Session: S-04 | Updated S-08 (DITA 2.0 + multi-topic) | Reviewer-signed-off
+NEW in S-09:
+  - @id removed from topic root elements (server assigns on import)
+  - Per-topic type detection: task / reference / concept / topic per chunk
+  - generate_ditamap() produces a .ditamap listing all topic files
+
+Session: S-04 | Updated S-08/S-09 | Reviewer-signed-off
 """
 
 from __future__ import annotations
@@ -24,13 +28,11 @@ from typing import Any
 # DITA 2.0 constants
 # ---------------------------------------------------------------------------
 
-# DITA 2.0 uses a real XML namespace
 DITA2_NS = "https://docs.oasis-open.org/dita/ns/2.0"
 DITA2_NS_MAP = {None: DITA2_NS}
 
 _VALID_TOPIC_TYPES = {"concept", "task", "reference", "topic"}
 
-# DOCTYPE for DITA 2.0
 _DOCTYPE_MAP = {
     "concept":   '<!DOCTYPE concept PUBLIC "-//OASIS//DTD DITA 2.0 Concept//EN" "concept.dtd">',
     "task":      '<!DOCTYPE task PUBLIC "-//OASIS//DTD DITA 2.0 Task//EN" "task.dtd">',
@@ -38,7 +40,6 @@ _DOCTYPE_MAP = {
     "topic":     '<!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA 2.0 Topic//EN" "topic.dtd">',
 }
 
-# DITA 2.0 body element per topic type
 _BODY_ELEM = {
     "concept":   "conbody",
     "task":      "taskbody",
@@ -51,11 +52,46 @@ _BODY_ELEM = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_topic_id(title: str) -> str:
+def _safe_filename(title: str, index: int) -> str:
+    """Derive a filesystem-safe filename from a topic title."""
     if not title:
-        return "untitled_topic"
+        return f"topic_{index:02d}.dita"
     slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
-    return slug or "topic"
+    return (slug or f"topic_{index:02d}") + ".dita"
+
+
+def _detect_topic_type(chunk: list[dict]) -> str:
+    """
+    Detect the DITA topic type for a single chunk of blocks.
+
+    Rules (in priority order):
+      1. Any step element            → task
+      2. Majority body blocks tables → reference
+      3. Has prose paragraphs        → concept
+      4. Ambiguous / very short      → topic
+    """
+    elements = [b.get("dita_element") for b in chunk]
+    body_elements = [e for e in elements if e not in (
+        "title", "section_title", "sectiondiv_title", "dropped", None
+    )]
+
+    if not body_elements:
+        return "topic"
+
+    if "step" in elements:
+        return "task"
+
+    table_count = sum(1 for e in body_elements if e in ("table", "dl"))
+    para_count  = sum(1 for e in body_elements if e == "p")
+    total = len(body_elements)
+
+    if total > 0 and table_count / total >= 0.5:
+        return "reference"
+
+    if para_count > 0:
+        return "concept"
+
+    return "topic"
 
 
 def _safe_text(element: etree._Element, text: str) -> None:
@@ -73,11 +109,7 @@ def _tag(ns: str, local: str) -> str:
 
 class Generator:
     def __init__(self, topic_type: str = "concept"):
-        if topic_type not in _VALID_TOPIC_TYPES:
-            raise ValueError(
-                f"Invalid topic_type {topic_type!r}. "
-                f"Choose from {sorted(_VALID_TOPIC_TYPES)}"
-            )
+        # topic_type kept for backward compat but ignored — detection is per-chunk
         self.topic_type = topic_type
 
     # -----------------------------------------------------------------------
@@ -87,24 +119,18 @@ class Generator:
     def generate(self, blocks: list[dict]) -> list[tuple[str, str]]:
         """
         Split blocks at every section_title boundary and generate one DITA
-        2.0 XML string per topic.
+        2.0 XML string per topic. Topic type is detected per chunk.
 
         Returns:
             List of (filename, xml_string) tuples.
             Single-topic documents return a list of exactly one tuple.
         """
-        # Detect topic type from mapper metadata
-        topic_type = self.topic_type
-        if blocks:
-            tt = blocks[0].get("metadata", {}).get("topic_type")
-            if tt in _VALID_TOPIC_TYPES:
-                topic_type = tt
-
-        # Split at section boundaries
         topic_chunks = self._split_into_topics(blocks)
 
         results: list[tuple[str, str]] = []
-        for chunk in topic_chunks:
+        for i, chunk in enumerate(topic_chunks):
+            # Per-chunk type detection (Fix 1 / S-09)
+            topic_type = _detect_topic_type(chunk)
             xml_str = self._render_topic(chunk, topic_type)
             # Derive filename from title block
             title_text = ""
@@ -112,10 +138,75 @@ class Generator:
                 if b.get("dita_element") in ("title", "section_title"):
                     title_text = b.get("text", "")
                     break
-            filename = _make_topic_id(title_text) + ".dita"
+            filename = _safe_filename(title_text, i + 1)
             results.append((filename, xml_str))
 
         return results
+
+    # -----------------------------------------------------------------------
+    # Public: generate a .ditamap referencing all topic files
+    # -----------------------------------------------------------------------
+
+    def generate_ditamap(
+        self,
+        topic_files: list[tuple[str, str]],
+        map_title: str = "Document Map",
+    ) -> str:
+        """
+        Generate a DITA 2.0 .ditamap that references all supplied topic files.
+
+        Args:
+            topic_files: list of (filename, xml_string) tuples from generate()
+            map_title:   <title> for the map (usually the source document name)
+
+        Returns:
+            XML string for the .ditamap file.
+        """
+        ns = DITA2_NS
+        root = etree.Element(
+            f"{{{ns}}}map",
+            nsmap=DITA2_NS_MAP,
+        )
+        root.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
+
+        title_el = etree.SubElement(root, f"{{{ns}}}title")
+        title_el.text = map_title
+
+        for fname, xml_str in topic_files:
+            # Extract topic title and type from the XML for navtitle
+            topic_title = fname.replace(".dita", "").replace("_", " ").title()
+            topic_type  = "topic"
+            try:
+                clean = "\n".join(
+                    l for l in xml_str.splitlines()
+                    if not l.strip().startswith("<?") and not l.strip().startswith("<!DOCTYPE")
+                )
+                parsed = etree.fromstring(clean.encode("utf-8"))
+                local = etree.QName(parsed.tag).localname
+                if local in _VALID_TOPIC_TYPES:
+                    topic_type = local
+                title_nodes = parsed.findall(f"{{{ns}}}title")
+                if title_nodes and title_nodes[0].text:
+                    topic_title = title_nodes[0].text.strip()
+            except Exception:
+                pass
+
+            topicref = etree.SubElement(root, f"{{{ns}}}topicref")
+            topicref.set("href", fname)
+            topicref.set("type", topic_type)
+            topicref.set("navtitle", topic_title)
+
+        etree.indent(root, space="  ")
+        xml_bytes = etree.tostring(
+            root,
+            xml_declaration=True,
+            encoding="UTF-8",
+            pretty_print=True,
+        )
+        xml_str = xml_bytes.decode("utf-8")
+        doctype = '<!DOCTYPE map PUBLIC "-//OASIS//DTD DITA 2.0 Map//EN" "map.dtd">'
+        decl_end = xml_str.index("?>") + 2
+        return xml_str[:decl_end] + "\n" + doctype + xml_str[decl_end:]
 
     # -----------------------------------------------------------------------
     # Split blocks at section_title boundaries
@@ -165,15 +256,13 @@ class Generator:
                 title_text = b.get("text", "Untitled Topic")
                 break
 
-        topic_id = _make_topic_id(title_text)
         ns = DITA2_NS
 
-        # Root element
+        # Root element — @id intentionally omitted (assigned by authoring server on import)
         root = etree.Element(
             _tag(ns, topic_type),
             nsmap=DITA2_NS_MAP,
         )
-        root.set("id", topic_id)
         root.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
 
         # <title>
