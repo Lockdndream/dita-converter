@@ -1,548 +1,319 @@
 """
+ui/app.py
 DITA Converter Tool — Streamlit UI
-====================================
-Convert text-based PDF and DOCX files to valid DITA 1.3 XML.
 
-Run with:
+Updated in S-08:
+  - DITA 2.0 output
+  - Multi-topic splitting: separate .dita per H1 section, delivered as ZIP
+  - Optional DOCX image folder input with usage instructions
+  - Single-topic output still downloads as a plain .dita file
+
+Run:
     streamlit run ui/app.py
-
-Session: S-06
-Author: Coder
 """
 
+from __future__ import annotations
+
 import io
-import os
 import sys
-import tempfile
+import zipfile
 import time
 from pathlib import Path
 
 import streamlit as st
 
-# Ensure project root is on sys.path when launched from ui/
-ROOT = Path(__file__).parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# Path resolution: works both from root and from ui/
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-from agents.extractor import Extractor, ExtractorError
-from agents.mapper import Mapper
-from agents.generator import Generator
-from agents.validator import Validator, ValidationResult
+from agents.extractor import extract_pdf, extract_docx, ExtractorError  # noqa: E402
+from agents.mapper import Mapper  # noqa: E402
+from agents.generator import Generator  # noqa: E402
+from agents.validator import Validator  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Page config — must be first Streamlit call
+# Page config
 # ---------------------------------------------------------------------------
+
 st.set_page_config(
-    page_title="DITA Converter Tool",
+    page_title="DITA Converter",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-RULES_PATH      = ROOT / "config" / "mapping_rules.yaml"
-ACCEPTED_TYPES  = ["pdf", "docx"]
-ACCENT_COLOR    = "#2E75B6"
-SUCCESS_COLOR   = "#375623"
-WARNING_COLOR   = "#C55A11"
-ERROR_COLOR     = "#C00000"
-
-# ---------------------------------------------------------------------------
-# CSS — minimal styling
-# ---------------------------------------------------------------------------
-st.markdown("""
-<style>
-    /* Tone down default Streamlit padding */
-    .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
-
-    /* Status badge helpers */
-    .badge-valid   { background:#E2EFDA; color:#375623; padding:2px 10px;
-                     border-radius:12px; font-weight:600; font-size:0.85rem; }
-    .badge-invalid { background:#FFE0E0; color:#C00000; padding:2px 10px;
-                     border-radius:12px; font-weight:600; font-size:0.85rem; }
-    .badge-info    { background:#D6E4F0; color:#1F3864; padding:2px 10px;
-                     border-radius:12px; font-weight:600; font-size:0.85rem; }
-
-    /* Stat card */
-    .stat-card     { background:#F2F2F2; border-radius:8px; padding:12px 16px;
-                     margin-bottom:8px; }
-    .stat-label    { font-size:0.78rem; color:#666; text-transform:uppercase;
-                     letter-spacing:0.05em; }
-    .stat-value    { font-size:1.5rem; font-weight:700; color:#1F3864; }
-
-    /* Pipeline step */
-    .pipe-step     { display:flex; align-items:center; gap:10px;
-                     padding:6px 0; font-size:0.9rem; }
-    .pipe-icon     { width:24px; text-align:center; }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
-def render_sidebar() -> None:
-    with st.sidebar:
-        st.markdown("## ⚙️ Configuration")
-        st.divider()
 
-        st.markdown("**Mapping Profile**")
-        st.code("gilbarco_passport_manuals", language=None)
+with st.sidebar:
+    st.title("📄 DITA Converter")
+    st.caption("PDF & DOCX → DITA 2.0 XML")
+    st.divider()
 
-        st.markdown("**DITA Output Version**")
-        st.code("1.3", language=None)
+    st.subheader("⚙️ Configuration")
+    st.markdown(f"""
+- **Mapping profile:** Gilbarco Passport
+- **DITA version:** 2.0
+- **Multi-topic:** enabled
+- **Images:** optional
+""")
+    st.divider()
 
-        st.markdown("**DITA 2.0 Migration**")
-        st.caption("Documented in `docs/01_Architecture.docx`")
-
-        st.divider()
-        st.markdown("**Pipeline Stages**")
-        stages = [
-            ("1", "Extractor",  "PDF/DOCX → Content Tree"),
-            ("2", "Mapper",     "Apply YAML rules"),
-            ("3", "Generator",  "Content Tree → DITA XML"),
-            ("4", "Validator",  "Well-formedness + report"),
-        ]
-        for num, name, desc in stages:
-            st.markdown(
-                f'<div class="pipe-step">'
-                f'<span class="pipe-icon">'
-                f'<span class="badge-info">{num}</span></span>'
-                f'<span><strong>{name}</strong> — {desc}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.divider()
-        st.markdown("**Supported Input**")
-        st.markdown("- Text-based PDF ✓")
-        st.markdown("- DOCX ✓")
-        st.markdown("- Scanned PDF ✗")
-
-        st.divider()
-        st.caption(
-            "DITA Converter Tool v1.0 · Proof of Concept\n\n"
-            "Open source — MIT License"
-        )
-
+    st.subheader("🔁 Pipeline")
+    st.markdown("""
+`[EXTRACTOR]` → Parse structure  
+`[MAPPER]` → Apply YAML rules  
+`[GENERATOR]` → Build DITA 2.0 XML  
+`[VALIDATOR]` → Check & report  
+""")
+    st.divider()
+    st.caption("Supported: `.pdf`, `.docx`")
 
 # ---------------------------------------------------------------------------
-# Pipeline runner
+# Main layout
 # ---------------------------------------------------------------------------
-def run_pipeline(
-    file_bytes: bytes,
-    filename: str,
-    suffix: str,
-) -> tuple[str, ValidationResult, str]:
-    """
-    Run the full Extractor → Mapper → Generator → Validator pipeline.
 
-    Args:
-        file_bytes: Raw file content from uploader.
-        filename:   Original filename (for display).
-        suffix:     File extension (.pdf or .docx).
+st.title("DITA 2.0 Converter Tool")
+st.markdown("Upload a text-based PDF or DOCX file to convert it to valid **DITA 2.0 XML**.")
 
-    Returns:
-        Tuple of (xml_string, validation_result, topic_type).
+left_col, right_col = st.columns([1, 1.6])
 
-    Raises:
-        ExtractorError: If file is unsupported or image-only.
-        Exception: On any other pipeline failure.
-    """
-    # Write to temp file — Extractor works on filesystem paths
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(file_bytes)
-        tmp_path = tmp.name
+# ---------------------------------------------------------------------------
+# LEFT: Upload + options
+# ---------------------------------------------------------------------------
 
-    try:
-        # Stage 1 — Extract
-        extractor = Extractor(tmp_path)
-        content_tree = extractor.extract()
+with left_col:
+    st.subheader("1 · Upload")
+    uploaded_file = st.file_uploader(
+        "Select a PDF or DOCX file",
+        type=["pdf", "docx"],
+        help="Text-based PDFs only. Scanned (image) PDFs are not supported.",
+    )
 
-        # Stage 2 — Map
-        mapper = Mapper(str(RULES_PATH))
-        annotated_tree, topic_type = mapper.map(content_tree)
+    # ---- DOCX image folder option ----
+    st.subheader("2 · Image Folder (DOCX only, optional)")
 
-        # Stage 3 — Generate
-        generator = Generator(topic_type)
-        xml_string = generator.generate(annotated_tree)
+    with st.expander("ℹ️ How to provide images from a DOCX file"):
+        st.markdown("""
+**Why this is needed:**  
+Images inside a `.docx` file are embedded in the archive. To link them in DITA `<image>` elements, you need to extract them first.
 
-        # Stage 4 — Validate
-        validator = Validator()
-        result = validator.validate(
-            xml_string,
-            dropped_blocks=extractor.dropped_count,
-            unmapped_blocks=mapper.fallback_count,
-            source_filename=filename,
-        )
+**Steps:**
+1. Make a copy of your `.docx` file
+2. Rename the copy so its extension changes from `.docx` → `.zip`
+3. Extract (unzip) the renamed file
+4. Inside the extracted folder, open the `word/` subfolder
+5. Inside `word/`, you will find a `media/` folder containing all images
+6. Enter the **full path** to that `media/` folder below
 
-        return xml_string, result, topic_type
+**Example path:**  
+`D:\\Projects\\ToDita - Claude\\extracted\\word\\media`
+""")
 
-    finally:
-        # Always clean up the temp file
+    image_folder = st.text_input(
+        "Media folder path",
+        placeholder="D:\\path\\to\\extracted\\word\\media",
+        help="Leave blank to skip image linking. Image placeholders will appear in the DITA output.",
+    )
+
+    if image_folder and not Path(image_folder).is_dir():
+        st.warning("⚠️ That folder path does not exist on this machine. Images will be skipped.")
+        image_folder = ""
+
+    run_button = st.button(
+        "▶  Convert to DITA 2.0",
+        type="primary",
+        disabled=uploaded_file is None,
+        use_container_width=True,
+    )
+
+# ---------------------------------------------------------------------------
+# RIGHT: Output
+# ---------------------------------------------------------------------------
+
+with right_col:
+    if "results" not in st.session_state:
+        st.session_state.results = None
+
+    if run_button and uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        file_name = uploaded_file.name
+        is_pdf = file_name.lower().endswith(".pdf")
+
+        status_box = st.empty()
+
+        def status(msg: str):
+            status_box.info(msg)
+
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+            t0 = time.time()
 
-
-# ---------------------------------------------------------------------------
-# Output panels
-# ---------------------------------------------------------------------------
-def render_stats_cards(result: ValidationResult, topic_type: str) -> None:
-    """Render a row of stat cards from the validation result."""
-    s = result.stats
-    cols = st.columns(4)
-
-    stat_items = [
-        ("Topic Type",    topic_type.upper(),         "badge-info"),
-        ("Sections",      str(s.get("sections", 0)),  None),
-        ("Notes",         str(s.get("notes", 0)),     None),
-        ("Steps",         str(s.get("steps", 0)),     None),
-    ]
-    for col, (label, value, badge) in zip(cols, stat_items):
-        with col:
-            if badge:
-                st.markdown(
-                    f'<div class="stat-card">'
-                    f'<div class="stat-label">{label}</div>'
-                    f'<span class="{badge}">{value}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+            # ---- EXTRACTOR ----
+            status("⏳ `[EXTRACTOR]` — Parsing document structure…")
+            if is_pdf:
+                blocks = extract_pdf(file_bytes)
             else:
-                st.markdown(
-                    f'<div class="stat-card">'
-                    f'<div class="stat-label">{label}</div>'
-                    f'<div class="stat-value">{value}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+                blocks = extract_docx(file_bytes, image_folder=image_folder)
+            status(f"✅ `[EXTRACTOR]` — {len(blocks)} blocks extracted")
 
-    cols2 = st.columns(4)
-    stat_items2 = [
-        ("Tables",       str(s.get("tables", 0))),
-        ("Figures",      str(s.get("figs", 0))),
-        ("Bullet Items", str(s.get("ul_items", 0))),
-        ("Word Count",   f"~{s.get('word_count', 0):,}"),
-    ]
-    for col, (label, value) in zip(cols2, stat_items2):
-        with col:
-            st.markdown(
-                f'<div class="stat-card">'
-                f'<div class="stat-label">{label}</div>'
-                f'<div class="stat-value">{value}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+            # ---- MAPPER ----
+            status("⏳ `[MAPPER]` — Applying YAML mapping rules…")
+            mapper = Mapper()
+            blocks = mapper.map(blocks)
+            tt = blocks[0].get("metadata", {}).get("topic_type", "concept") if blocks else "concept"
+            status(f"✅ `[MAPPER]` — Annotated as `{tt}` topic")
 
+            # ---- GENERATOR ----
+            status("⏳ `[GENERATOR]` — Generating DITA 2.0 XML…")
+            gen = Generator(topic_type=tt)
+            topic_files: list[tuple[str, str]] = gen.generate(blocks)
+            n_topics = len(topic_files)
+            status(f"✅ `[GENERATOR]` — {n_topics} topic file(s) generated")
 
-def render_pipeline_summary(result: ValidationResult) -> None:
-    """Render pipeline block counts."""
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric(
-            label="Blocks dropped (headers/footers/pagination)",
-            value=result.dropped_blocks,
-            help="Lines removed during extraction: running headers, footers, "
-                 "copyright lines, TOC entries.",
-        )
-    with c2:
-        delta_color = "off" if result.unmapped_blocks == 0 else "inverse"
-        st.metric(
-            label="Blocks using fallback element",
-            value=result.unmapped_blocks,
-            delta=None if result.unmapped_blocks == 0 else "Review mapping_rules.yaml",
-            delta_color=delta_color,
-            help="Blocks where no YAML rule matched. "
-                 "Add rules to mapping_rules.yaml to improve these.",
-        )
+            # ---- VALIDATOR ----
+            status("⏳ `[VALIDATOR]` — Validating XML…")
+            validator = Validator()
+            validation_results = []
+            for fname, xml_str in topic_files:
+                vr = validator.validate(xml_str, blocks, filename=fname)
+                validation_results.append((fname, xml_str, vr))
 
+            total_errors = sum(len(vr.errors) for _, _, vr in validation_results)
+            total_warnings = sum(len(vr.warnings) for _, _, vr in validation_results)
+            elapsed = time.time() - t0
 
-def render_validity_badge(result: ValidationResult) -> None:
-    """Show a coloured validity badge."""
-    if result.is_valid:
-        st.markdown(
-            '<span class="badge-valid">✓ VALID DITA 1.3 XML</span>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<span class="badge-invalid">✗ INVALID — See Errors Below</span>',
-            unsafe_allow_html=True,
-        )
+            if total_errors == 0:
+                status(f"✅ `[VALIDATOR]` — {total_errors} errors · {total_warnings} warnings · {elapsed:.2f}s")
+            else:
+                status(f"⚠️ `[VALIDATOR]` — {total_errors} errors · {total_warnings} warnings · {elapsed:.2f}s")
 
-
-# ---------------------------------------------------------------------------
-# Main app
-# ---------------------------------------------------------------------------
-def main() -> None:
-    # ── Header ──────────────────────────────────────────────────────────
-    st.markdown(
-        "# 📄 DITA Converter Tool"
-    )
-    st.caption(
-        "Convert text-based **PDF** and **DOCX** files to valid **DITA 1.3 XML** · "
-        "Proof of Concept v1.0"
-    )
-
-    render_sidebar()
-
-    # ── Layout ──────────────────────────────────────────────────────────
-    left_col, right_col = st.columns([1, 2], gap="large")
-
-    # ── Left column: upload + progress ──────────────────────────────────
-    with left_col:
-        st.markdown("### Upload Document")
-
-        uploaded_file = st.file_uploader(
-            label="Choose a PDF or DOCX file",
-            type=ACCEPTED_TYPES,
-            help="Text-based PDFs only. Scanned / image PDFs are not supported.",
-            label_visibility="collapsed",
-        )
-
-        if uploaded_file is not None:
-            fname  = uploaded_file.name
-            suffix = Path(fname).suffix.lower()
-            size_kb = len(uploaded_file.getvalue()) / 1024
-
-            st.markdown(f"**File:** `{fname}`")
-            st.markdown(f"**Size:** {size_kb:.1f} KB")
-            st.divider()
-
-            # ── Run pipeline ─────────────────────────────────────────────
-            st.markdown("**Pipeline**")
-
-            stage_states = {
-                "Extractor":  "⏳",
-                "Mapper":     "⏸",
-                "Generator":  "⏸",
-                "Validator":  "⏸",
+            st.session_state.results = {
+                "topic_files": validation_results,
+                "n_topics": n_topics,
+                "source_name": file_name,
+                "elapsed": elapsed,
+                "blocks": blocks,
             }
 
-            placeholders = {k: st.empty() for k in stage_states}
+        except ExtractorError as exc:
+            status_box.error(f"❌ Extraction failed: {exc}")
+            st.info("💡 Tip: Only text-based (digital) PDFs are supported. Scanned documents require OCR preprocessing.")
+            st.session_state.results = None
 
-            def update_stage(name: str, icon: str, note: str = "") -> None:
-                label = f"{icon} **{name}**"
-                if note:
-                    label += f" — {note}"
-                placeholders[name].markdown(label)
+        except Exception as exc:
+            status_box.error(f"❌ Unexpected error: {exc}")
+            st.session_state.results = None
 
-            # Initial state
-            for name in stage_states:
-                update_stage(name, stage_states[name])
+    # -----------------------------------------------------------------------
+    # Display results
+    # -----------------------------------------------------------------------
 
-            update_stage("Extractor", "🔄", "extracting...")
+    if st.session_state.results:
+        res = st.session_state.results
+        topic_files: list[tuple[str, str, object]] = res["topic_files"]
+        n_topics: int = res["n_topics"]
+        source_name: str = res["source_name"]
 
-            try:
-                start = time.time()
+        st.divider()
 
-                # Write to temp + extract
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                    tmp.write(uploaded_file.getvalue())
-                    tmp_path = tmp.name
-
-                try:
-                    extractor = Extractor(tmp_path)
-                    content_tree = extractor.extract()
-                finally:
-                    os.unlink(tmp_path)
-
-                block_count = len(content_tree)
-                update_stage("Extractor", "✅", f"{block_count} blocks")
-                update_stage("Mapper", "🔄", "applying rules...")
-
-                mapper = Mapper(str(RULES_PATH))
-                annotated_tree, topic_type = mapper.map(content_tree)
-
-                update_stage("Mapper", "✅", f"topic type: {topic_type}")
-                update_stage("Generator", "🔄", "building XML...")
-
-                generator = Generator(topic_type)
-                xml_string = generator.generate(annotated_tree)
-
-                update_stage("Generator", "✅", f"{len(xml_string):,} chars")
-                update_stage("Validator", "🔄", "validating...")
-
-                validator = Validator()
-                result = validator.validate(
-                    xml_string,
-                    dropped_blocks=extractor.dropped_count,
-                    unmapped_blocks=mapper.fallback_count,
-                    source_filename=fname,
-                )
-
-                elapsed = time.time() - start
-                v_icon = "✅" if result.is_valid else "❌"
-                update_stage(
-                    "Validator", v_icon,
-                    f"{'valid' if result.is_valid else 'invalid'} · "
-                    f"{len(result.errors)} errors · "
-                    f"{len(result.warnings)} warnings"
-                )
-
-                st.divider()
-                st.success(f"Completed in {elapsed:.2f}s", icon="⚡")
-
-                # ── Download button ───────────────────────────────────────
-                dita_filename = Path(fname).stem + ".dita"
-                st.download_button(
-                    label="⬇️  Download .dita file",
-                    data=xml_string.encode("utf-8"),
-                    file_name=dita_filename,
-                    mime="application/xml",
-                    use_container_width=True,
-                    type="primary",
-                )
-
-                # Store results in session state for right column
-                st.session_state["result"]     = result
-                st.session_state["xml_string"] = xml_string
-                st.session_state["topic_type"] = topic_type
-                st.session_state["filename"]   = fname
-
-            except ExtractorError as exc:
-                update_stage("Extractor", "❌", "failed")
-                for name in ["Mapper", "Generator", "Validator"]:
-                    update_stage(name, "⏸", "skipped")
-                st.error(str(exc), icon="🚫")
-                st.info(
-                    "**Tip:** Only text-based PDFs are supported. "
-                    "If your PDF is scanned, please use a text-extractable version.",
-                    icon="💡",
-                )
-                st.session_state.pop("result", None)
-
-            except Exception as exc:
-                st.error(f"Pipeline error: {exc}", icon="❌")
-                st.session_state.pop("result", None)
-
+        # ---- Download button ----
+        if n_topics == 1:
+            fname, xml_str, vr = topic_files[0]
+            st.download_button(
+                label="⬇️ Download .dita",
+                data=xml_str.encode("utf-8"),
+                file_name=fname,
+                mime="application/xml",
+                type="primary",
+                use_container_width=True,
+            )
         else:
-            # No file uploaded — show instructions
-            st.info(
-                "Upload a **text-based PDF** or **DOCX** file above to begin "
-                "conversion to DITA 1.3 XML.",
-                icon="📂",
+            # Multiple topics → ZIP
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fname, xml_str, vr in topic_files:
+                    zf.writestr(fname, xml_str.encode("utf-8"))
+            zip_buffer.seek(0)
+            zip_name = Path(source_name).stem + "_dita_topics.zip"
+            st.success(f"✅ **{n_topics} topics** generated. Downloading as ZIP.")
+            st.download_button(
+                label=f"⬇️ Download {zip_name}",
+                data=zip_buffer,
+                file_name=zip_name,
+                mime="application/zip",
+                type="primary",
+                use_container_width=True,
             )
-            st.markdown("**What you'll get:**")
-            st.markdown("- Valid DITA 1.3 XML file")
-            st.markdown("- XML preview with syntax highlighting")
-            st.markdown("- Content inventory and validation report")
-            st.markdown("- Downloadable `.dita` file")
 
-    # ── Right column: output tabs ────────────────────────────────────────
-    with right_col:
-        if "result" not in st.session_state:
-            st.markdown("### Output")
-            st.markdown(
-                '<div style="height:300px; display:flex; align-items:center; '
-                'justify-content:center; color:#999; border:2px dashed #ddd; '
-                'border-radius:12px; font-size:1.1rem;">'
-                '⬅  Upload a document to see output here'
-                '</div>',
-                unsafe_allow_html=True,
-            )
-            return
+        # ---- Tabs ----
+        tabs = st.tabs(["📄 DITA XML", "✅ Validation", "📊 Stats"])
 
-        result     = st.session_state["result"]
-        xml_string = st.session_state["xml_string"]
-        topic_type = st.session_state["topic_type"]
-        filename   = st.session_state["filename"]
-
-        # Validity badge + filename
-        col_a, col_b = st.columns([3, 1])
-        with col_a:
-            st.markdown(f"### Output — `{filename}`")
-        with col_b:
-            st.markdown("<br>", unsafe_allow_html=True)
-            render_validity_badge(result)
-
-        # ── Tabs ────────────────────────────────────────────────────────
-        tab_xml, tab_report, tab_stats = st.tabs([
-            "📝 DITA XML",
-            "🔍 Validation Report",
-            "📊 Content Stats",
-        ])
-
-        with tab_xml:
-            st.markdown(
-                f"**DITA 1.3 XML** · `{len(xml_string):,}` characters · "
-                f"`{len(xml_string.splitlines())}` lines"
-            )
-            # Display clean (pretty-printed) XML if valid, raw otherwise
-            display_xml = result.xml_clean if result.xml_clean else xml_string
-            # Trim very large outputs for display performance
-            MAX_DISPLAY_CHARS = 50_000
-            if len(display_xml) > MAX_DISPLAY_CHARS:
-                st.code(
-                    display_xml[:MAX_DISPLAY_CHARS] + "\n\n... [truncated for display]",
-                    language="xml",
-                )
-                st.caption(
-                    f"⚠ Display limited to {MAX_DISPLAY_CHARS:,} characters. "
-                    "Download the full file using the button on the left."
-                )
-            else:
+        with tabs[0]:
+            if n_topics == 1:
+                _, xml_str, _ = topic_files[0]
+                display_xml = xml_str if len(xml_str) <= 50_000 else xml_str[:50_000] + "\n\n<!-- ... truncated for display. Download for full file. -->"
                 st.code(display_xml, language="xml")
-
-        with tab_report:
-            st.markdown("**Validation Report**")
-
-            # Errors
-            if result.errors:
-                for err in result.errors:
-                    st.error(err, icon="❌")
             else:
-                st.success("No errors found.", icon="✅")
+                topic_names = [fname for fname, _, _ in topic_files]
+                selected = st.selectbox("Select topic to preview:", topic_names)
+                for fname, xml_str, _ in topic_files:
+                    if fname == selected:
+                        display_xml = xml_str if len(xml_str) <= 50_000 else xml_str[:50_000] + "\n\n<!-- truncated -->"
+                        st.code(display_xml, language="xml")
+                        break
 
-            # Warnings
-            if result.warnings:
-                st.markdown(f"**Warnings ({len(result.warnings)})**")
-                for warn in result.warnings:
-                    st.warning(warn, icon="⚠")
-            else:
-                st.info("No warnings.", icon="ℹ")
+        with tabs[1]:
+            for fname, _, vr in topic_files:
+                with st.expander(f"📄 {fname}", expanded=(n_topics == 1)):
+                    if vr.errors:
+                        for e in vr.errors:
+                            st.error(e)
+                    if vr.warnings:
+                        for w in vr.warnings:
+                            st.warning(w)
+                    if not vr.errors and not vr.warnings:
+                        st.success("Clean — no errors or warnings.")
+                    st.code(vr.report, language="text")
 
-            st.divider()
-            st.markdown("**Pipeline Summary**")
-            render_pipeline_summary(result)
+        with tabs[2]:
+            all_stats = [vr.stats for _, _, vr in topic_files]
 
-            st.divider()
-            st.markdown("**Full Plain-Text Report**")
-            st.code(result.report, language=None)
+            # Aggregate
+            total_words = sum(s.get("word_count", 0) for s in all_stats)
+            total_sections = sum(s.get("sections", 0) for s in all_stats)
+            total_notes = sum(s.get("notes", 0) for s in all_stats)
+            total_steps = sum(s.get("steps", 0) for s in all_stats)
+            total_tables = sum(s.get("tables", 0) for s in all_stats)
+            total_figs = sum(s.get("figures", 0) for s in all_stats)
 
-        with tab_stats:
-            st.markdown("**Content Inventory**")
-            render_stats_cards(result, topic_type)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Topics", n_topics)
+            m2.metric("Word Count", total_words)
+            m3.metric("Sections", total_sections)
+            m4.metric("Notes", total_notes)
 
-            st.divider()
-            st.markdown("**Topic Details**")
-            s = result.stats
-            detail_cols = st.columns(2)
-            with detail_cols[0]:
-                st.markdown(f"**Topic type:** `{s.get('topic_type','')}`")
-                st.markdown(f"**Topic ID:** `{s.get('topic_id','')}`")
-                st.markdown(f"**Title:** {s.get('title','')}")
-            with detail_cols[1]:
-                st.markdown(f"**Ol items:** {s.get('ol_items', 0)}")
-                st.markdown(f"**Code blocks:** {s.get('codeblocks', 0)}")
-                st.markdown(
-                    f"**Sectiondivs:** {s.get('sectiondivs', 0)}"
-                )
+            m5, m6, m7, m8 = st.columns(4)
+            m5.metric("Steps", total_steps)
+            m6.metric("Tables", total_tables)
+            m7.metric("Figures", total_figs)
+            m8.metric("Time (s)", f"{res['elapsed']:.2f}")
 
-            if result.unmapped_blocks > 0:
-                st.divider()
-                st.warning(
-                    f"**{result.unmapped_blocks} block(s)** were mapped using the "
-                    "fallback `<p>` element. To improve mapping quality, add "
-                    "matching rules to `config/mapping_rules.yaml`.",
-                    icon="⚠",
-                )
+            if n_topics > 1:
+                st.subheader("Topic breakdown")
+                for fname, _, vr in topic_files:
+                    s = vr.stats
+                    st.markdown(
+                        f"**{fname}** — {s.get('word_count',0)} words · "
+                        f"{s.get('sections',0)} sections · "
+                        f"{s.get('steps',0)} steps · "
+                        f"{s.get('notes',0)} notes"
+                    )
 
-
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    main()
+            if res["blocks"]:
+                b0 = res["blocks"][0]
+                fb = b0.get("metadata", {}).get("fallback_count", 0)
+                if fb > 0:
+                    st.warning(f"⚠️ {fb} block(s) used the fallback `<p>` element. "
+                               "Review the validation report for details.")

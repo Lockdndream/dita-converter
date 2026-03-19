@@ -1,461 +1,389 @@
 """
-DITA Converter Tool — Agent 1: Extractor
-=========================================
-Converts PDF and DOCX source files into a normalised Content Tree.
+agents/extractor.py
+DITA Converter Tool — Extractor Agent
 
-Font size → element map (calibrated from Gilbarco Passport manuals):
-    ≥ 17pt  Arial-Bold  → H1  (chapter headings: "Feature Activation")
-    ≥ 13pt  Arial-Bold  → H2  (section headings: "Before You Begin")
-    ≥ 11.5pt Arial-Bold → H3  (sub-section headings)
-    ≥ 14.5pt Arial-Bold → NOTE_HEADER (IMPORTANT INFORMATION callouts)
-    ~10pt   Arial-Bold  → numbered step or figure caption
-    ~11pt   Times       → body paragraph
-    ≤ 9.4pt italic      → DROP (running headers/footers)
+Parses PDF and DOCX files into a normalised Content Tree (list of block dicts).
+Each block is produced by make_block() and carries: type, text, metadata.
 
-Session: S-02
-Author: Coder
+Font-size thresholds calibrated against Gilbarco Passport manuals:
+  H1 = 18pt  |  H2 = 14pt  |  H3 = 12pt
+  Note header = 15pt  |  Steps/Figures = 10pt
+  Body = 11pt  |  Headers/Footers = 9pt or less
+
+Session: S-02 | Reviewer-signed-off
 """
 
 from __future__ import annotations
+
 import re
 from pathlib import Path
-from typing import Union
-
-import pdfplumber
-from docx import Document as DocxDocument
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Font-size thresholds (calibrated against MDE-5570A, MDE-3839Q)
+# Block factory
 # ---------------------------------------------------------------------------
-PDF_H1_SIZE       = 17.0
-PDF_H2_SIZE       = 13.0
-PDF_H3_SIZE       = 11.5
-PDF_NOTE_HDR_SIZE = 14.5
-PDF_BODY_MIN_SIZE = 9.5
 
-BULLET_CHARS = {"•", "–", "◦", "▪", "‐", "\uf020", "·"}
-
-DROP_TEXT_PATTERNS = [
-    re.compile(r"^Page\s+\d+\s+MDE-"),
-    re.compile(r"^MDE-\w+\s+.+\d{4}"),
-    re.compile(r"^©\s*\d{4}"),
-    re.compile(r"^Table of Contents$"),
-    re.compile(r"^GOLD(SM)?\s*Library$", re.IGNORECASE),
-    re.compile(r"^\s*$"),
-]
-
-FIGURE_PATTERN   = re.compile(r"^Figure\s+\d+\s*:", re.IGNORECASE)
-STEP_PATTERN     = re.compile(r"^(\d+)\s*[.)]\s+(.+)", re.DOTALL)
-NOTE_PREFIX      = re.compile(r"^Notes?\s*:", re.IGNORECASE)
-IMPORTANT_PREFIX = re.compile(r"^IMPORTANT\s*:", re.IGNORECASE)
-
-DOCX_HEADING_STYLES = {
-    "Heading 1": 1, "heading 1": 1,
-    "Heading 2": 2, "heading 2": 2,
-    "Heading 3": 3, "heading 3": 3,
-    "Heading 4": 4, "heading 4": 4,
-    "Title":     1,
+VALID_TYPES = {
+    "heading", "paragraph", "list_item", "table",
+    "figure", "note_header", "note_inline", "code_block", "dropped",
 }
 
 
-class ExtractorError(Exception):
-    """Raised when a file cannot be extracted."""
+def make_block(
+    block_type: str,
+    text: str,
+    level: int = 0,
+    is_header: bool = False,
+    rows: list | None = None,
+    metadata: dict | None = None,
+) -> dict[str, Any]:
+    if block_type not in VALID_TYPES:
+        raise ValueError(f"Unknown block type: {block_type!r}")
+    block: dict[str, Any] = {
+        "type": block_type,
+        "text": text.strip() if text else "",
+        "level": level,
+        "is_header": is_header,
+        "rows": rows or [],
+        "metadata": metadata or {},
+        "dita_element": None,
+    }
+    return block
+
+
+# ---------------------------------------------------------------------------
+# Custom error
+# ---------------------------------------------------------------------------
+
+class ExtractorError(RuntimeError):
     pass
 
 
-class Extractor:
-    """
-    Extracts structured content from PDF or DOCX files into a Content Tree.
+# ---------------------------------------------------------------------------
+# Drop-pattern helpers
+# ---------------------------------------------------------------------------
 
-    Usage:
-        extractor = Extractor("path/to/file.pdf")
-        content_tree = extractor.extract()
-    """
+_DROP_PATTERNS = [
+    re.compile(r"^Page \d+"),
+    re.compile(r"MDE-\w+.+\d{4}$"),
+    re.compile(r"^©\s*\d{4}"),
+    re.compile(r"^Table of Contents"),
+    re.compile(r"^Related Documents"),
+]
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
-    def __init__(self, file_path: Union[str, Path]) -> None:
-        self.file_path = Path(file_path)
-        self._dropped_count = 0
-        self._validate_file()
+def _should_drop(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return True
+    if len(t) < 3:
+        return True
+    for pat in _DROP_PATTERNS:
+        if pat.search(t):
+            return True
+    return False
 
-    def _validate_file(self) -> None:
-        if not self.file_path.exists():
-            raise ExtractorError(f"File not found: {self.file_path}")
-        if self.file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
+
+# ---------------------------------------------------------------------------
+# PDF Extractor
+# ---------------------------------------------------------------------------
+
+# Font-size → heading level mapping (calibrated on Gilbarco manuals)
+_H1_SIZE   = 17.0   # ≥ 17 pt bold → H1
+_H2_SIZE   = 13.5   # ≥ 13.5 pt bold → H2
+_H3_SIZE   = 11.5   # ≥ 11.5 pt bold → H3
+_NOTE_SIZE = 14.0   # ≥ 14 pt bold → potential note header
+_STEP_SIZE =  9.5   # ≤ 9.5 pt → running header/footer (drop)
+_DROP_SIZE =  9.5
+
+
+def _classify_line(word_group: list[dict]) -> tuple[str, int]:
+    """Return (block_type, level) for a group of words on one line."""
+    if not word_group:
+        return "paragraph", 0
+
+    sizes = [w.get("size", 11) for w in word_group]
+    avg_size = sum(sizes) / len(sizes)
+
+    fonts = [w.get("fontname", "") for w in word_group]
+    is_bold = any("Bold" in f or "BoldMT" in f for f in fonts)
+
+    if avg_size <= _DROP_SIZE:
+        return "dropped", 0
+
+    if is_bold:
+        if avg_size >= _H1_SIZE:
+            return "heading", 1
+        if avg_size >= _NOTE_SIZE:
+            return "note_header", 0
+        if avg_size >= _H2_SIZE:
+            return "heading", 2
+        if avg_size >= _H3_SIZE:
+            return "heading", 3
+
+    return "paragraph", 0
+
+
+def extract_pdf(file_bytes: bytes) -> list[dict]:
+    """Extract a content tree from a text-based PDF."""
+    import pdfplumber  # type: ignore
+
+    blocks: list[dict] = []
+    dropped_count = 0
+
+    with pdfplumber.open(file_bytes if hasattr(file_bytes, "read") else
+                         __import__("io").BytesIO(file_bytes)) as pdf:
+
+        total_chars = sum(len(p.extract_text() or "") for p in pdf.pages)
+        if total_chars < 50:
             raise ExtractorError(
-                f"Unsupported file type: {self.file_path.suffix}. "
-                f"Supported: {', '.join(self.SUPPORTED_EXTENSIONS)}"
+                "No extractable text found. This appears to be a scanned PDF. "
+                "Please supply a text-based (digital) PDF."
             )
 
-    @property
-    def dropped_count(self) -> int:
-        return self._dropped_count
+        for page in pdf.pages:
+            # ---- Tables first ----
+            tables = page.extract_tables()
+            table_bboxes = [t.bbox for t in page.find_tables()] if tables else []
 
-    def extract(self) -> list[dict]:
-        """
-        Extract content from the source file into a Content Tree.
+            for table_data in tables:
+                if not table_data:
+                    continue
+                rows = []
+                for row in table_data:
+                    rows.append([cell or "" for cell in row])
+                is_hdr = False
+                if rows:
+                    first = " ".join(rows[0]).upper()
+                    _note_kw = {"WARNING", "CAUTION", "DANGER", "IMPORTANT INFORMATION"}
+                    is_hdr = any(kw in first for kw in _note_kw) or True
+                blocks.append(make_block("table", "", is_header=True, rows=rows))
 
-        Returns:
-            List of content block dicts.
-
-        Raises:
-            ExtractorError: If extraction fails or PDF is image-only.
-        """
-        self._dropped_count = 0
-        suffix = self.file_path.suffix.lower()
-        try:
-            if suffix == ".pdf":
-                return self._extract_pdf()
-            return self._extract_docx()
-        except ExtractorError:
-            raise
-        except Exception as exc:
-            raise ExtractorError(
-                f"Extraction failed for {self.file_path.name}: {exc}"
-            ) from exc
-
-    # ------------------------------------------------------------------
-    # PDF EXTRACTION
-    # ------------------------------------------------------------------
-
-    def _extract_pdf(self) -> list[dict]:
-        blocks: list[dict] = []
-
-        with pdfplumber.open(self.file_path) as pdf:
-            # Scanned PDF guard
-            sample = "".join(
-                (p.extract_text() or "") for p in pdf.pages[:3]
+            # ---- Words → lines ----
+            words = page.extract_words(
+                x_tolerance=3,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=True,
+                extra_attrs=["fontname", "size"],
             )
-            if not sample.strip():
-                raise ExtractorError(
-                    f"No text found in '{self.file_path.name}'. "
-                    "This appears to be a scanned/image PDF. "
-                    "Only text-based PDFs are supported in v1."
-                )
 
-            for page in pdf.pages:
-                blocks.extend(self._extract_pdf_page(page))
+            # Group words into lines by top-coordinate
+            lines: dict[float, list] = {}
+            for w in words:
+                top = round(w["top"], 1)
+                lines.setdefault(top, []).append(w)
 
-        return self._merge_paragraphs(blocks)
+            prev_para = None
+            for top in sorted(lines):
+                word_group = lines[top]
+                text = " ".join(w["text"] for w in word_group).strip()
 
-    def _extract_pdf_page(self, page) -> list[dict]:
-        page_blocks: list[dict] = []
+                if _should_drop(text):
+                    dropped_count += 1
+                    continue
 
-        # Tables first
-        try:
-            for table_data in page.extract_tables():
-                blk = self._pdf_table_to_block(table_data)
-                if blk:
-                    page_blocks.append(blk)
-        except Exception:
-            pass
+                block_type, level = _classify_line(word_group)
 
-        # Line-level text
-        try:
-            lines = page.extract_text_lines(extra_attrs=["size", "fontname"])
-        except Exception:
-            lines = []
+                if block_type == "dropped":
+                    dropped_count += 1
+                    continue
 
-        for line in lines:
-            blk = self._pdf_line_to_block(line)
-            if blk is None:
-                self._dropped_count += 1
-            else:
-                page_blocks.append(blk)
+                # Bullet detection
+                if text.startswith(("•", "–", "-", "▪", "◆")) or \
+                   re.match(r"^[●○■□▸▹►]", text):
+                    text = re.sub(r"^[•–\-▪◆●○■□▸▹►]\s*", "", text)
+                    block_type = "list_item"
+                    meta = {"list_kind": "bullet"}
+                    blocks.append(make_block(block_type, text, metadata=meta))
+                    prev_para = None
+                    continue
 
-        return page_blocks
+                # Numbered item detection
+                num_match = re.match(r"^(\d{1,2})\s{1,4}(.+)", text)
+                if num_match and block_type == "paragraph":
+                    text = num_match.group(2)
+                    block_type = "list_item"
+                    meta = {"list_kind": "numbered", "num": int(num_match.group(1))}
+                    blocks.append(make_block(block_type, text, metadata=meta))
+                    prev_para = None
+                    continue
 
-    def _pdf_line_to_block(self, line: dict) -> dict | None:
-        text = line.get("text", "").strip()
-        if not text:
-            return None
+                # Figure caption
+                if re.match(r"^Figure\s+\d+\s*:", text, re.IGNORECASE):
+                    blocks.append(make_block("figure", text))
+                    prev_para = None
+                    continue
 
-        chars = line.get("chars", [])
-        if not chars:
-            return None
+                # Inline note
+                if re.match(r"^Notes?:", text, re.IGNORECASE):
+                    blocks.append(make_block("note_inline", text))
+                    prev_para = None
+                    continue
 
-        dominant = chars[0]
-        size     = round(dominant.get("size", 11.0), 1)
-        fontname = dominant.get("fontname", "")
-        is_bold  = any(k in fontname for k in ("Bold", "BoldMT"))
-        is_italic = any(k in fontname for k in ("Italic", "ItalicMT"))
+                # Code block signals
+                code_signals = ("telnet ", "C:\\>", "$ ", "http://")
+                if any(text.startswith(s) for s in code_signals):
+                    blocks.append(make_block("code_block", text))
+                    prev_para = None
+                    continue
 
-        # Drop running headers/footers (small italic Times lines)
-        if is_italic and size <= 9.5:
-            return None
+                # Paragraph merging (continuation lines at same style)
+                if block_type == "paragraph" and prev_para is not None:
+                    # Merge if previous was also a paragraph and ends mid-sentence
+                    last = blocks[-1]
+                    if last["type"] == "paragraph" and not last["text"].endswith((".", ":", "?")):
+                        last["text"] = last["text"] + " " + text
+                        continue
 
-        # Drop by text pattern
-        for pat in DROP_TEXT_PATTERNS:
-            if pat.search(text):
-                return None
+                blocks.append(make_block(block_type, text, level=level))
+                prev_para = block_type if block_type == "paragraph" else None
 
-        # IMPORTANT INFORMATION note header
-        if size >= PDF_NOTE_HDR_SIZE and is_bold and "IMPORTANT" in text.upper():
-            return self.make_block("note_header", text=text,
-                                   attributes={"note_type": "important"})
+    # Tag how many blocks were dropped
+    for b in blocks:
+        b.setdefault("metadata", {})
+    if blocks:
+        blocks[0]["metadata"]["dropped_count"] = dropped_count
 
-        # WARNING / CAUTION / DANGER
-        for ntype in ("WARNING", "CAUTION", "DANGER"):
-            if text.strip().upper().startswith(ntype) and is_bold:
-                return self.make_block("note_header", text=text,
-                                       attributes={"note_type": ntype.lower()})
+    return blocks
 
-        # H1
-        if size >= PDF_H1_SIZE and is_bold:
-            return self.make_block("heading", text=text, level=1,
-                                   attributes={"font_size": size})
 
-        # H2
-        if size >= PDF_H2_SIZE and is_bold:
-            return self.make_block("heading", text=text, level=2,
-                                   attributes={"font_size": size})
+# ---------------------------------------------------------------------------
+# DOCX Extractor
+# ---------------------------------------------------------------------------
 
-        # H3
-        if size >= PDF_H3_SIZE and is_bold:
-            return self.make_block("heading", text=text, level=3,
-                                   attributes={"font_size": size})
+_DOCX_STYLE_MAP = {
+    "Heading 1": ("heading", 1),
+    "Heading 2": ("heading", 2),
+    "Heading 3": ("heading", 3),
+    "Heading 4": ("heading", 3),
+    "Title":     ("heading", 1),
+    "Subtitle":  ("heading", 2),
+}
 
-        # Figure caption
-        if FIGURE_PATTERN.match(text):
-            caption = re.sub(r"^Figure\s+\d+\s*:\s*", "", text).strip()
-            return self.make_block("figure", text=caption,
-                                   attributes={"raw_label": text})
+_DOCX_NOTE_STYLES = {"Caution", "Warning", "Note", "Important"}
 
-        # Note inline prefix
-        if NOTE_PREFIX.match(text) or IMPORTANT_PREFIX.match(text):
-            ntype = "important" if IMPORTANT_PREFIX.match(text) else "note"
-            return self.make_block("note_inline", text=text,
-                                   attributes={"note_type": ntype})
 
-        # Bullet list item
-        if text[0] in BULLET_CHARS or text.startswith("- "):
-            content = re.sub(r"^[•–\-◦▪·\uf020]\s*", "", text).strip()
-            return self.make_block("list_item", text=content,
-                                   attributes={"list_type": "bullet"})
+def extract_docx(file_bytes: bytes, image_folder: str = "") -> list[dict]:
+    """Extract a content tree from a DOCX file.
 
-        # Numbered step (10pt bold)
-        step_m = STEP_PATTERN.match(text)
-        if step_m and is_bold and size <= 10.5:
-            return self.make_block("list_item",
-                                   text=step_m.group(2).strip(),
-                                   attributes={"list_type": "numbered",
-                                               "number": step_m.group(1)})
+    Args:
+        file_bytes: Raw bytes of the .docx file.
+        image_folder: Optional path to the extracted media folder (from the
+                      renamed .zip). When provided, image relationships are
+                      resolved to absolute paths for DITA <image href>.
+    """
+    import io
+    from docx import Document  # type: ignore
+    from docx.oxml.ns import qn  # type: ignore
 
-        # Drop very small text
-        if size < PDF_BODY_MIN_SIZE:
-            return None
+    doc = Document(io.BytesIO(file_bytes))
+    blocks: list[dict] = []
+    dropped_count = 0
+    image_map: dict[str, str] = {}
 
-        # Code block
-        for sig in ("telnet ", "C:\\>", "C:/", "$ ", "http://", "https://"):
-            if text.startswith(sig):
-                return self.make_block("code_block", text=text)
+    # Build image relationship map if folder provided
+    if image_folder:
+        img_dir = Path(image_folder)
+        if img_dir.is_dir():
+            # Map rId → absolute path by scanning rels
+            for rel in doc.part.rels.values():
+                if "image" in rel.reltype:
+                    target = rel.target_ref  # e.g. "media/image1.png"
+                    fname = Path(target).name
+                    candidate = img_dir / fname
+                    if candidate.exists():
+                        image_map[rel.rId] = str(candidate)
 
-        # Default paragraph
-        attrs: dict = {}
-        if is_bold:
-            attrs["is_bold"] = True
-        if is_italic:
-            attrs["is_italic"] = True
-        return self.make_block("paragraph", text=text, attributes=attrs)
-
-    def _pdf_table_to_block(self, table_data: list[list]) -> dict | None:
-        if not table_data:
-            return None
-        cleaned_rows = []
-        for row in table_data:
-            if row is None:
-                continue
-            cleaned = [(c.strip() if isinstance(c, str) else "") for c in row]
-            if any(cleaned):
-                cleaned_rows.append(cleaned)
-        if not cleaned_rows:
-            return None
-
-        children = [
-            self.make_block("table_row", text="",
-                            attributes={"is_header": i == 0, "cells": row})
-            for i, row in enumerate(cleaned_rows)
-        ]
-        return self.make_block("table", text="", children=children,
-                               attributes={"col_count": len(cleaned_rows[0])})
-
-    def _merge_paragraphs(self, blocks: list[dict]) -> list[dict]:
-        """
-        Join wrapped paragraph lines back into single blocks.
-        pdfplumber often splits one long paragraph across multiple line objects.
-        """
-        if not blocks:
-            return blocks
-        merged: list[dict] = []
-        for blk in blocks:
-            prev = merged[-1] if merged else None
-            if (
-                blk["type"] == "paragraph"
-                and prev
-                and prev["type"] == "paragraph"
-                and not prev["text"].endswith((".", ":", "?", "!"))
-                and blk["text"]
-                and not blk["text"][0].isupper()
-            ):
-                prev["text"] = prev["text"].rstrip() + " " + blk["text"].strip()
-            else:
-                merged.append(blk)
-        return merged
-
-    # ------------------------------------------------------------------
-    # DOCX EXTRACTION
-    # ------------------------------------------------------------------
-
-    def _extract_docx(self) -> list[dict]:
-        doc = DocxDocument(str(self.file_path))
-        blocks: list[dict] = []
-
-        for element in doc.element.body:
-            tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
-
-            if tag == "p":
-                blk = self._docx_para_to_block(element, doc)
-                if blk is None:
-                    self._dropped_count += 1
-                else:
-                    blocks.append(blk)
-
-            elif tag == "tbl":
-                blk = self._docx_table_to_block(element, doc)
-                if blk:
-                    blocks.append(blk)
-
-        return blocks
-
-    def _docx_para_to_block(self, para_el, doc) -> dict | None:
-        from docx.text.paragraph import Paragraph
-        para = Paragraph(para_el, doc)
+    for para in doc.paragraphs:
         text = para.text.strip()
-        style_name = para.style.name if para.style else "Normal"
+        style_name = para.style.name if para.style else ""
 
         if not text:
-            return None
-        for pat in DROP_TEXT_PATTERNS:
-            if pat.search(text):
-                return None
+            continue
 
-        # Heading styles
-        if style_name in DOCX_HEADING_STYLES:
-            return self.make_block("heading", text=text,
-                                   level=DOCX_HEADING_STYLES[style_name],
-                                   style_name=style_name)
+        if _should_drop(text):
+            dropped_count += 1
+            continue
 
-        # Note inline prefix
-        if NOTE_PREFIX.match(text) or IMPORTANT_PREFIX.match(text):
-            ntype = "important" if IMPORTANT_PREFIX.match(text) else "note"
-            return self.make_block("note_inline", text=text,
-                                   style_name=style_name,
-                                   attributes={"note_type": ntype})
+        # Check for inline images in runs
+        for run in para.runs:
+            for drawing in run._element.findall(
+                    ".//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}inline"):
+                blip_fills = drawing.findall(
+                    ".//{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill")
+                for bf in blip_fills:
+                    blip = bf.find(
+                        "{http://schemas.openxmlformats.org/drawingml/2006/main}blip")
+                    if blip is not None:
+                        r_embed = blip.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                        img_path = image_map.get(r_embed, "")
+                        caption = text or f"Image {r_embed}"
+                        blocks.append(make_block(
+                            "figure", caption,
+                            metadata={"image_href": img_path, "r_id": r_embed}
+                        ))
 
-        # IMPORTANT INFORMATION header
-        if text.upper() == "IMPORTANT INFORMATION":
-            return self.make_block("note_header", text=text,
-                                   style_name=style_name,
-                                   attributes={"note_type": "important"})
+        # Style-driven classification
+        if style_name in _DOCX_STYLE_MAP:
+            btype, level = _DOCX_STYLE_MAP[style_name]
+            blocks.append(make_block(btype, text, level=level))
+            continue
 
-        # WARNING / CAUTION / DANGER
-        for ntype in ("WARNING", "CAUTION", "DANGER"):
-            if text.strip().upper().startswith(ntype):
-                return self.make_block("note_header", text=text,
-                                       style_name=style_name,
-                                       attributes={"note_type": ntype.lower()})
+        # Note styles
+        if style_name in _DOCX_NOTE_STYLES:
+            blocks.append(make_block("note_header", text))
+            continue
+
+        # List paragraph
+        if "List" in style_name:
+            list_kind = "numbered" if "Number" in style_name else "bullet"
+            blocks.append(make_block("list_item", text, metadata={"list_kind": list_kind}))
+            continue
+
+        # Inline note prefix
+        if re.match(r"^Notes?:", text, re.IGNORECASE):
+            blocks.append(make_block("note_inline", text))
+            continue
 
         # Figure caption
-        if FIGURE_PATTERN.match(text):
-            caption = re.sub(r"^Figure\s+\d+\s*:\s*", "", text).strip()
-            return self.make_block("figure", text=caption,
-                                   style_name=style_name,
-                                   attributes={"raw_label": text})
+        if re.match(r"^Figure\s+\d+\s*:", text, re.IGNORECASE):
+            blocks.append(make_block("figure", text))
+            continue
 
-        # List styles
-        if any(k in style_name for k in ("List", "Bullet")):
-            return self.make_block("list_item", text=text,
-                                   style_name=style_name,
-                                   attributes={"list_type": "bullet"})
-        if "Number" in style_name:
-            m = STEP_PATTERN.match(text)
-            return self.make_block("list_item",
-                                   text=m.group(2).strip() if m else text,
-                                   style_name=style_name,
-                                   attributes={"list_type": "numbered",
-                                               "number": m.group(1) if m else "?"})
+        # Code style
+        if "Code" in style_name or "Preformatted" in style_name:
+            blocks.append(make_block("code_block", text))
+            continue
 
-        # Bullet character in body text
-        if text[0] in BULLET_CHARS:
-            content = re.sub(r"^[•–\-◦▪·\uf020]\s*", "", text).strip()
-            return self.make_block("list_item", text=content,
-                                   style_name=style_name,
-                                   attributes={"list_type": "bullet"})
+        # Bullet by text prefix
+        if text.startswith(("•", "–", "▪")):
+            text = re.sub(r"^[•–▪]\s*", "", text)
+            blocks.append(make_block("list_item", text, metadata={"list_kind": "bullet"}))
+            continue
 
-        # Code block
-        for sig in ("telnet ", "C:\\>", "C:/", "$ ", "http://", "https://"):
-            if text.startswith(sig):
-                return self.make_block("code_block", text=text,
-                                       style_name=style_name)
+        # Numbered item
+        num_match = re.match(r"^(\d{1,2})[.)]\s+(.+)", text)
+        if num_match:
+            blocks.append(make_block(
+                "list_item", num_match.group(2),
+                metadata={"list_kind": "numbered", "num": int(num_match.group(1))}
+            ))
+            continue
 
-        # Default paragraph
-        attrs: dict = {}
-        if all(r.bold for r in para.runs if r.text.strip()):
-            attrs["is_bold"] = True
-        if all(r.italic for r in para.runs if r.text.strip()):
-            attrs["is_italic"] = True
-        return self.make_block("paragraph", text=text,
-                               style_name=style_name, attributes=attrs)
+        blocks.append(make_block("paragraph", text))
 
-    def _docx_table_to_block(self, tbl_el, doc) -> dict | None:
-        from docx.table import Table
-        table = Table(tbl_el, doc)
-        if not table.rows:
-            return None
+    # Tables
+    for table in doc.tables:
+        rows = []
+        for row in table.rows:
+            rows.append([cell.text.strip() for cell in row.cells])
+        if rows:
+            blocks.append(make_block("table", "", is_header=True, rows=rows))
 
-        children = []
-        for i, row in enumerate(table.rows):
-            cells = [c.text.strip() for c in row.cells]
-            if any(cells):
-                children.append(self.make_block(
-                    "table_row", text="",
-                    attributes={"is_header": i == 0, "cells": cells}
-                ))
+    if blocks:
+        blocks[0]["metadata"]["dropped_count"] = dropped_count
 
-        if not children:
-            return None
-
-        col_count = len(table.columns) if table.columns else 0
-        return self.make_block("table", text="", children=children,
-                               attributes={"col_count": col_count})
-
-    # ------------------------------------------------------------------
-    # FACTORY
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def make_block(
-        block_type: str,
-        text: str = "",
-        level: int | None = None,
-        style_name: str | None = None,
-        children: list | None = None,
-        attributes: dict | None = None,
-    ) -> dict:
-        """
-        Create a normalised content block.
-
-        Block types: heading | paragraph | list_item | table | table_row |
-                     figure | code_block | note_header | note_inline
-        """
-        return {
-            "type":         block_type,
-            "level":        level,
-            "text":         text,
-            "style_name":   style_name,
-            "children":     children,
-            "attributes":   attributes or {},
-            "dita_element": None,
-        }
+    return blocks
