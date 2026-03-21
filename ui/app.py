@@ -1,15 +1,6 @@
 """
 ui/app.py
 DITA Converter Tool — Streamlit UI
-
-S-09 updates:
-  - Dark mode default; light mode toggle in sidebar
-  - .ditamap generated and shown as primary map view
-  - Checkbox multi-select per topic → selective ZIP or single .dita download
-  - @id removed from topics (per-chunk type detection in generator)
-
-Run:
-    streamlit run ui/app.py
 """
 
 from __future__ import annotations
@@ -42,32 +33,235 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------------------------------------------------------------------------
+# Particle animation + UI polish injected into the Streamlit shell
+# ---------------------------------------------------------------------------
 
-
-# Minimal CSS — cards and badges only; system theme handles everything else
+# ---------------------------------------------------------------------------
+# CSS for topic cards and badges (safe — no JS needed here)
+# ---------------------------------------------------------------------------
 st.markdown("""
 <style>
+  /* Frosted glass panel behind the left (controls) column */
+  [data-testid="column"]:first-child > div:first-child {
+    background: rgba(255, 255, 255, 0.55) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border-radius: 14px !important;
+    padding: 18px 20px !important;
+    border: 1px solid rgba(180, 195, 240, 0.35) !important;
+    box-shadow: 0 4px 24px rgba(100, 120, 200, 0.08) !important;
+  }
   .topic-card {
-    border: 1px solid rgba(128,128,128,0.25);
+    border: 1px solid rgba(99,130,237,0.25);
     border-radius: 8px;
     padding: 12px 16px;
     margin-bottom: 6px;
-    transition: border-color 0.15s ease;
+    background: rgba(255,255,255,0.55);
+    transition: border-color 0.2s ease, background 0.2s ease;
   }
-  .topic-card:hover { border-color: rgba(128,128,128,0.6); }
-  .badge-task      { background:rgba(46,125,50,0.15);  color:#2E7D32; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-concept   { background:rgba(21,101,192,0.12); color:#1565C0; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-reference { background:rgba(230,81,0,0.12);   color:#E65100; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
-  .badge-topic     { background:rgba(128,128,128,0.12);color:#757575; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; }
+  .topic-card:hover {
+    border-color: rgba(99,130,237,0.55);
+    background: rgba(255,255,255,0.8);
+  }
+  .badge-task      { background:rgba(46,125,50,0.12);  color:#276749; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; font-family:monospace; }
+  .badge-concept   { background:rgba(49,130,206,0.12); color:#2b6cb0; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; font-family:monospace; }
+  .badge-reference { background:rgba(192,86,33,0.12);  color:#c05621; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; font-family:monospace; }
+  .badge-topic     { background:rgba(113,128,150,0.12);color:#4a5568; border-radius:4px; padding:2px 8px; font-size:0.75em; font-weight:600; font-family:monospace; }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Particle animation — injected into the parent page via components.v1.html
+# Uses window.parent to escape the iframe sandbox
+# ---------------------------------------------------------------------------
+import streamlit.components.v1 as _components
+
+_components.html("""
+<script>
+(function() {
+  var doc = window.parent.document;
+
+  if (!doc.getElementById('dita-particles-style')) {
+    var style = doc.createElement('style');
+    style.id = 'dita-particles-style';
+    style.textContent = `
+      #dita-particle-canvas {
+        position: fixed !important;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        z-index: 0;
+        pointer-events: none !important;
+      }
+      body {
+        background: linear-gradient(160deg,#f0f4ff 0%,#e8f0fe 50%,#f5f0ff 100%) !important;
+        background-attachment: fixed !important;
+      }
+      .stApp { background: transparent !important; }
+      .main .block-container { position: relative; z-index: 1; }
+      section[data-testid="stSidebar"] { position: relative !important; }
+      section[data-testid="stSidebar"] > div:first-child {
+        background: rgba(248,250,255,0.88) !important;
+      }
+    `;
+    doc.head.appendChild(style);
+  }
+
+  if (doc.getElementById('dita-particle-canvas')) return;
+  var canvas = doc.createElement('canvas');
+  canvas.id = 'dita-particle-canvas';
+  doc.body.appendChild(canvas);
+  var ctx = canvas.getContext('2d');
+
+  var W, H;
+  var mouse = { x: -9999, y: -9999, active: false };
+
+  function resize() {
+    W = canvas.width  = window.parent.innerWidth;
+    H = canvas.height = window.parent.innerHeight;
+    initFilings();
+  }
+  window.parent.addEventListener('resize', resize);
+  window.parent.document.addEventListener('mousemove', function(e) {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.active = true;
+  });
+
+  // ── Field: pure mouse dipole + slow time-varying background field ──────
+  // No fixed poles. The background field rotates slowly so filings drift.
+  // Mouse acts as a strong pole that dominates locally.
+
+  var tick = 0;
+
+  function fieldAt(x, y) {
+    var fx = 0, fy = 0;
+
+    // Slow rotating uniform background — gives the whole canvas a consistent
+    // field direction that rotates over ~2 min, keeping filings alive everywhere
+    var angle = tick * 0.0004;
+    fx += Math.cos(angle) * 0.06;
+    fy += Math.sin(angle) * 0.06;
+
+    // Gentle standing waves — two overlapping sine fields that create
+    // a spatially varying pattern across the canvas
+    var wave1 = Math.sin(x * 0.007 + tick * 0.0012) * 0.04;
+    var wave2 = Math.cos(y * 0.009 - tick * 0.0008) * 0.04;
+    fx += wave1;
+    fy += wave2;
+
+    // Mouse pole — dominant field, visible across large radius
+    if (mouse.active) {
+      var mdx = x - mouse.x;
+      var mdy = y - mouse.y;
+      var md2 = mdx*mdx + mdy*mdy + 100;
+      var md  = Math.sqrt(md2);
+      // Use 1/d falloff (not 1/d2) so influence reaches much further
+      fx += (18.0 / (md + 1)) * mdx / md;
+      fy += (18.0 / (md + 1)) * mdy / md;
+    }
+
+    return { x: fx, y: fy };
+  }
+
+  // ── Filings ───────────────────────────────────────────────────────────
+  var FILINGS = 2200;
+  var filings = [];
+
+  function initFilings() {
+    filings = [];
+    for (var i = 0; i < FILINGS; i++) {
+      filings.push({
+        x:   Math.random() * W,
+        y:   Math.random() * H,
+        len: 4 + Math.random() * 6,
+        age: Math.floor(Math.random() * 260),
+      });
+    }
+  }
+
+  function frame() {
+    // Slow fade — lets trail show field movement without smearing
+    ctx.fillStyle = 'rgba(240,244,255,0.10)';
+    ctx.fillRect(0, 0, W, H);
+    tick++;
+
+    for (var i = 0; i < FILINGS; i++) {
+      var f = filings[i];
+      f.age++;
+
+      // Drift slowly along field line
+      var fv = fieldAt(f.x, f.y);
+      var fm = Math.sqrt(fv.x*fv.x + fv.y*fv.y);
+      if (fm > 0.00001) {
+        f.x += (fv.x / fm) * 0.18;
+        f.y += (fv.y / fm) * 0.18;
+      }
+
+      // Respawn when out of bounds or too old
+      if (f.x < -10 || f.x > W+10 || f.y < -10 || f.y > H+10 || f.age > 280) {
+        f.x   = Math.random() * W;
+        f.y   = Math.random() * H;
+        f.age = 0;
+        continue;
+      }
+
+      // Direction from field
+      var v  = fieldAt(f.x, f.y);
+      var m  = Math.sqrt(v.x*v.x + v.y*v.y);
+      if (m < 0.00001) continue;
+      var nx = v.x / m, ny = v.y / m;
+
+      var halfLen = f.len * 0.5;
+
+      // Age fade in/out
+      var ageFade = Math.min(f.age / 25, 1) * Math.min((280 - f.age) / 25, 1);
+
+      // Strength-based alpha — floor keeps everything visible
+      var strength = Math.min(m * 80, 1);
+      var alpha    = (0.30 + strength * 0.38) * ageFade;
+
+      // Colour varies by position — gentle spatial hue shift
+      var hue = 215 + Math.sin(f.x * 0.005 + f.y * 0.004) * 30;
+      var sat = 45 + strength * 20;
+      var lig = 32 + (1 - strength) * 18;
+
+      ctx.beginPath();
+      ctx.moveTo(f.x - nx * halfLen, f.y - ny * halfLen);
+      ctx.lineTo(f.x + nx * halfLen, f.y + ny * halfLen);
+      ctx.strokeStyle = 'hsla(' + hue + ',' + sat + '%,' + lig + '%,' + alpha + ')';
+      ctx.lineWidth   = 0.05 + strength * 0.05;
+      ctx.stroke();
+    }
+
+    // Mouse ripple
+    if (mouse.active) {
+      var rp = (tick % 180) / 180;
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, 50 * rp, 0, 6.2832);
+      ctx.strokeStyle = 'hsla(230,60%,50%,' + (1-rp)*0.25 + ')';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  W = window.parent.innerWidth;
+  H = window.parent.innerHeight;
+  canvas.width = W; canvas.height = H;
+  initFilings();
+  frame();
+})();
+</script>
+""", height=0)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _topic_type_from_xml(xml_str: str) -> str:
-    """Extract the topic type from the root element of a DITA XML string."""
     _VALID = {"concept", "task", "reference", "topic"}
     try:
         from lxml import etree as _et
@@ -95,15 +289,13 @@ with st.sidebar:
     st.title("📄 DITA Converter")
     st.caption("PDF & DOCX → DITA 2.0 XML")
 
-
     st.divider()
     st.subheader("⚙️ Configuration")
     st.markdown("""
-- **Mapping profile:** Gilbarco Passport
+- **Mapping profile:** Gilbarco
 - **DITA version:** 2.0
 - **Multi-topic:** enabled
-- **Map:** .ditamap generated
-- **Bookmap:** coming soon
+- **Map types:** `.ditamap` · `.bookmap`
 """)
     st.divider()
     st.subheader("🔁 Pipeline")
@@ -120,8 +312,8 @@ with st.sidebar:
 # Main layout
 # ---------------------------------------------------------------------------
 
-st.title("DITA 2.0 Converter Tool")
-st.markdown("Upload a text-based PDF or DOCX to convert to **DITA 2.0 XML** with a `.ditamap`.")
+st.title("DITA 2.0 Converter")
+st.markdown("Upload a text-based PDF or DOCX to convert to **DITA 2.0 XML**.")
 
 left_col, right_col = st.columns([1, 1.7])
 
@@ -164,7 +356,7 @@ with left_col:
         "Select output format:",
         options=["Map (Kit documents)", "Bookmap (Book documents)"],
         index=0,
-        help="Map produces a standard .ditamap with topics. Bookmap produces a structured bookmap with chapters.",
+        help="Map produces a standard .ditamap. Bookmap produces a structured bookmap with chapters.",
     )
     is_bookmap = output_type == "Bookmap (Book documents)"
 
@@ -172,11 +364,10 @@ with left_col:
     page_range = st.text_input(
         "Pages to extract",
         placeholder="e.g. 1-5, 8, 12-15  (leave blank for all pages)",
-        help="Specify individual pages or ranges separated by commas. Leave blank to convert all pages.",
+        help="Specify pages or ranges separated by commas. Leave blank to convert all pages.",
         disabled=False,
     )
     if page_range and page_range.strip():
-        # Basic format validation
         import re as _re
         if not _re.match(r'^[\d\s,\-]+$', page_range):
             st.warning("⚠️ Invalid format — use numbers, commas and hyphens only. e.g. 1-5, 8, 12-15")
@@ -326,7 +517,6 @@ with right_col:
 
             st.divider()
 
-            # Download row
             col_map, col_sel, col_all = st.columns(3)
 
             with col_map:

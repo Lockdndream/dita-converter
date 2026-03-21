@@ -74,6 +74,25 @@ git config --global user.email "your@email.com"
 
 ---
 
+## Branch Workflow
+
+```cmd
+REM Start of every session — always confirm you're on develop
+git checkout develop
+git pull
+
+REM Work, then commit to develop as usual
+git add <files>
+git commit -m "type(scope): message"
+git push
+
+REM When tested and confirmed — merge to main
+git checkout main
+git merge develop
+git push
+git checkout develop
+```
+
 ## Session Reference
 
 | Session | Key deliverable |
