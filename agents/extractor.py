@@ -72,6 +72,118 @@ _DROP_PATTERNS = [
     re.compile(r"^Related Documents"),
 ]
 
+# ---------------------------------------------------------------------------
+# ROW_SHOW table detector
+# ---------------------------------------------------------------------------
+# FrameMaker ROW_SHOW tables have no vertical column lines.
+# Headers are bounded by thick rules (~2pt, appears as rect height ≥ 1.5pt).
+# Data rows are separated by thin rules (~0.5pt).
+# Columns are inferred from word X-position clusters.
+# ---------------------------------------------------------------------------
+
+_ROW_SHOW_THICK = 1.5   # minimum rect height (pts) to be a header boundary rule
+_ROW_SHOW_COL_GAP = 50  # minimum X gap (pts) between columns
+
+
+def _extract_rowshow_tables(page) -> list[list[list[str]]]:
+    """
+    Detect and extract ROW_SHOW borderless tables from a pdfplumber page.
+
+    Returns a list of tables. Each table is a list of rows.
+    Each row is a list of cell strings. Row 0 is the header row.
+    """
+    from collections import defaultdict
+
+    rects = sorted(page.rects, key=lambda r: r["top"])
+    words = page.extract_words(
+        x_tolerance=3, y_tolerance=5, extra_attrs=["fontname", "size"]
+    )
+
+    # Group rects by their horizontal span (same span = same table)
+    span_groups: dict = defaultdict(list)
+    for r in rects:
+        if r["x1"] - r["x0"] > 50:  # ignore tiny decorative marks
+            key = (round(r["x0"], 0), round(r["x1"], 0))
+            span_groups[key].append(r)
+
+    tables: list[list[list[str]]] = []
+
+    for (x0, x1), group in span_groups.items():
+        if len(group) < 3:
+            continue  # need header-top + header-bottom + at least one data rule
+
+        group = sorted(group, key=lambda r: r["top"])
+        thick = [r for r in group if (r["bottom"] - r["top"]) >= _ROW_SHOW_THICK]
+        thin  = [r for r in group if (r["bottom"] - r["top"]) <  _ROW_SHOW_THICK]
+
+        if len(thick) < 2:
+            continue  # no header boundaries found
+
+        header_top    = thick[0]["top"]
+        header_bottom = thick[1]["bottom"]
+
+        row_seps = sorted([r["top"] for r in thin if r["top"] > header_bottom])
+        if not row_seps:
+            continue
+
+        table_bottom = thin[-1]["bottom"]
+
+        # Collect words within this table's bounding box
+        t_words = [
+            w for w in words
+            if w["x0"] >= x0 - 5 and w["x1"] <= x1 + 5
+            and w["top"] >= header_top and w["top"] <= table_bottom + 10
+        ]
+        if not t_words:
+            continue
+
+        # Infer column boundaries from X-position gaps
+        x_positions = sorted(set(round(w["x0"], 0) for w in t_words))
+        col_breaks = [x0]
+        for i in range(1, len(x_positions)):
+            if x_positions[i] - x_positions[i - 1] > _ROW_SHOW_COL_GAP:
+                col_breaks.append(x_positions[i])
+        col_breaks.append(x1 + 10)
+        n_cols = len(col_breaks) - 1
+
+        def _assign_col(wx: float) -> int:
+            for ci in range(len(col_breaks) - 1):
+                if col_breaks[ci] <= wx < col_breaks[ci + 1]:
+                    return ci
+            return n_cols - 1
+
+        def _words_in_band(top_y: float, bot_y: float) -> list[str]:
+            band = [w for w in t_words
+                    if w["top"] >= top_y - 2 and w["top"] <= bot_y + 2]
+            cells = [""] * n_cols
+            for w in band:
+                c = _assign_col(w["x0"])
+                cells[c] = (cells[c] + " " + w["text"]).strip()
+            return cells
+
+        rows: list[list[str]] = []
+
+        # Header row (between first two thick rules)
+        hdr = _words_in_band(header_top, header_bottom)
+
+        # Skip merged title rows above the real column headers:
+        # If the header band contains a second band immediately below that
+        # also looks like column labels (both cells non-empty), prefer that.
+        # Otherwise use as-is.
+        rows.append(hdr)
+
+        # Data rows
+        band_tops = [header_bottom] + row_seps
+        band_bots = row_seps + [table_bottom + 15]
+        for top_y, bot_y in zip(band_tops, band_bots):
+            row = _words_in_band(top_y, bot_y)
+            if any(c.strip() for c in row):
+                rows.append(row)
+
+        tables.append(rows)
+
+    return tables
+
 
 def _parse_page_range(page_range: str, total_pages: int) -> set[int]:
     """
@@ -219,22 +331,38 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 blank_pages_skipped += 1
                 continue
 
-            # ---- Tables first ----
-            tables = page.extract_tables()
-            table_bboxes = [t.bbox for t in page.find_tables()] if tables else []
+            # ---- Tables: pdfplumber bordered + ROW_SHOW borderless ----
+            # Pass 1: pdfplumber's standard table detector (bordered tables)
+            std_tables = page.extract_tables()
+            std_bboxes: list = []
+            if std_tables:
+                std_bboxes = [t.bbox for t in page.find_tables()]
 
-            for table_data in tables:
+            for table_data in std_tables:
                 if not table_data:
                     continue
-                rows = []
-                for row in table_data:
-                    rows.append([cell or "" for cell in row])
-                is_hdr = False
-                if rows:
-                    first = " ".join(rows[0]).upper()
-                    _note_kw = {"WARNING", "CAUTION", "DANGER", "IMPORTANT INFORMATION"}
-                    is_hdr = any(kw in first for kw in _note_kw) or True
+                rows = [[cell or "" for cell in row] for row in table_data]
                 blocks.append(make_block("table", "", is_header=True, rows=rows))
+
+            # Pass 2: ROW_SHOW borderless table detector
+            # Skip areas already covered by bordered tables
+            for rs_table in _extract_rowshow_tables(page):
+                if not rs_table:
+                    continue
+                # De-duplicate: skip if this table's header Y overlaps a bordered table bbox
+                # (pdfplumber already got it)
+                skip = False
+                if std_bboxes and rs_table:
+                    # Get Y of first row content — approximate from word positions
+                    for bbox in std_bboxes:
+                        # bbox = (x0, top, x1, bottom)
+                        if len(bbox) == 4:
+                            _, btop, _, bbot = bbox
+                            if btop <= 150 <= bbot:  # rough overlap check
+                                skip = True
+                                break
+                if not skip:
+                    blocks.append(make_block("table", "", is_header=True, rows=rs_table))
 
             # ---- Words → lines ----
             words = page.extract_words(
