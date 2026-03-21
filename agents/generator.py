@@ -144,7 +144,7 @@ class Generator:
         return results
 
     # -----------------------------------------------------------------------
-    # Public: generate a .ditamap referencing all topic files
+    # Public: generate a DITA 2.0 .ditamap referencing all topic files
     # -----------------------------------------------------------------------
 
     def generate_ditamap(
@@ -154,26 +154,15 @@ class Generator:
     ) -> str:
         """
         Generate a DITA 2.0 .ditamap that references all supplied topic files.
-
-        Args:
-            topic_files: list of (filename, xml_string) tuples from generate()
-            map_title:   <title> for the map (usually the source document name)
-
-        Returns:
-            XML string for the .ditamap file.
         """
         ns = DITA2_NS
-        root = etree.Element(
-            f"{{{ns}}}map",
-            nsmap=DITA2_NS_MAP,
-        )
+        root = etree.Element(f"{{{ns}}}map", nsmap=DITA2_NS_MAP)
         root.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
 
         title_el = etree.SubElement(root, f"{{{ns}}}title")
         title_el.text = map_title
 
         for fname, xml_str in topic_files:
-            # Extract topic title and type from the XML for navtitle
             topic_title = fname.replace(".dita", "").replace("_", " ").title()
             topic_type  = "topic"
             try:
@@ -194,17 +183,98 @@ class Generator:
             topicref = etree.SubElement(root, f"{{{ns}}}topicref")
             topicref.set("href", fname)
             topicref.set("type", topic_type)
-            topicref.set("navtitle", topic_title)
 
         etree.indent(root, space="  ")
-        xml_bytes = etree.tostring(
-            root,
-            xml_declaration=True,
-            encoding="UTF-8",
-            pretty_print=True,
-        )
+        xml_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8", pretty_print=True)
         xml_str = xml_bytes.decode("utf-8")
         doctype = '<!DOCTYPE map PUBLIC "-//OASIS//DTD DITA 2.0 Map//EN" "map.dtd">'
+        decl_end = xml_str.index("?>") + 2
+        return xml_str[:decl_end] + "\n" + doctype + xml_str[decl_end:]
+
+    # -----------------------------------------------------------------------
+    # Public: generate a DITA 2.0 .ditamap of type bookmap
+    # -----------------------------------------------------------------------
+
+    def generate_bookmap(
+        self,
+        topic_files: list[tuple[str, str]],
+        map_title: str = "Book Title",
+        subtitle: str = "",
+        author: str = "",
+    ) -> str:
+        """
+        Generate a DITA 2.0 bookmap.
+
+        Structure:
+          <bookmap>
+            <booktitle>
+              <mainbooktitle>...</mainbooktitle>
+              <subtitle>...</subtitle>          (if provided)
+            </booktitle>
+            <bookmeta>
+              <author>...</author>              (if provided)
+            </bookmeta>
+            <chapter href="topic1.dita">        (one per topic file)
+              <topicref href="subtopic.dita"/>  (nested topics not yet supported)
+            </chapter>
+          </bookmap>
+
+        Each topic file becomes a <chapter>. The first topic (usually the
+        introduction / overview) becomes the first chapter. Topic type is
+        preserved as the @type attribute on each chapter element.
+
+        Args:
+            topic_files: list of (filename, xml_string) from generate()
+            map_title:   Main book title
+            subtitle:    Optional subtitle
+            author:      Optional author name
+        """
+        ns = DITA2_NS
+
+        root = etree.Element(f"{{{ns}}}bookmap", nsmap=DITA2_NS_MAP)
+        root.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
+
+        # ── <booktitle> ────────────────────────────────────────────────────
+        booktitle_el = etree.SubElement(root, f"{{{ns}}}booktitle")
+        main_title = etree.SubElement(booktitle_el, f"{{{ns}}}mainbooktitle")
+        main_title.text = map_title
+        if subtitle:
+            sub_el = etree.SubElement(booktitle_el, f"{{{ns}}}subtitle")
+            sub_el.text = subtitle
+
+        # ── <bookmeta> ─────────────────────────────────────────────────────
+        bookmeta_el = etree.SubElement(root, f"{{{ns}}}bookmeta")
+        if author:
+            author_el = etree.SubElement(bookmeta_el, f"{{{ns}}}author")
+            author_el.text = author
+
+        # ── <chapter> per topic ────────────────────────────────────────────
+        for fname, xml_str in topic_files:
+            # Resolve topic title and type from XML
+            topic_title = fname.replace(".dita", "").replace("_", " ").title()
+            topic_type  = "topic"
+            try:
+                clean = "\n".join(
+                    l for l in xml_str.splitlines()
+                    if not l.strip().startswith("<?") and not l.strip().startswith("<!DOCTYPE")
+                )
+                parsed = etree.fromstring(clean.encode("utf-8"))
+                local = etree.QName(parsed.tag).localname
+                if local in _VALID_TOPIC_TYPES:
+                    topic_type = local
+                title_nodes = parsed.findall(f"{{{ns}}}title")
+                if title_nodes and title_nodes[0].text:
+                    topic_title = title_nodes[0].text.strip()
+            except Exception:
+                pass
+
+            chapter = etree.SubElement(root, f"{{{ns}}}chapter")
+            chapter.set("href", fname)
+
+        etree.indent(root, space="  ")
+        xml_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8", pretty_print=True)
+        xml_str = xml_bytes.decode("utf-8")
+        doctype = '<!DOCTYPE bookmap PUBLIC "-//OASIS//DTD DITA 2.0 BookMap//EN" "bookmap.dtd">'
         decl_end = xml_str.index("?>") + 2
         return xml_str[:decl_end] + "\n" + doctype + xml_str[decl_end:]
 

@@ -62,9 +62,9 @@ class Validator:
 
         # ---- 2. Root element check ----
         local = etree.QName(root.tag).localname if root.tag.startswith("{") else root.tag
-        if local not in ("concept", "task", "reference", "topic"):
+        if local not in ("concept", "task", "reference", "topic", "bookmap", "map"):
             result.errors.append(
-                f"Root element <{local}> is not a recognised DITA 2.0 topic type."
+                f"Root element <{local}> is not a recognised DITA 2.0 topic or map type."
             )
 
         ns = DITA2_NS

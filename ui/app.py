@@ -103,6 +103,7 @@ with st.sidebar:
 - **DITA version:** 2.0
 - **Multi-topic:** enabled
 - **Map:** .ditamap generated
+- **Bookmap:** coming soon
 """)
     st.divider()
     st.subheader("🔁 Pipeline")
@@ -158,6 +159,28 @@ with left_col:
         st.warning("⚠️ Folder not found — images will be skipped.")
         image_folder = ""
 
+    st.subheader("3 · Output Type")
+    output_type = st.radio(
+        "Select output format:",
+        options=["Map (Kit documents)", "Bookmap (Book documents)"],
+        index=0,
+        help="Map produces a standard .ditamap with topics. Bookmap produces a structured bookmap with chapters.",
+    )
+    is_bookmap = output_type == "Bookmap (Book documents)"
+
+    st.subheader("4 · Page Range (PDF only, optional)")
+    page_range = st.text_input(
+        "Pages to extract",
+        placeholder="e.g. 1-5, 8, 12-15  (leave blank for all pages)",
+        help="Specify individual pages or ranges separated by commas. Leave blank to convert all pages.",
+        disabled=False,
+    )
+    if page_range and page_range.strip():
+        # Basic format validation
+        import re as _re
+        if not _re.match(r'^[\d\s,\-]+$', page_range):
+            st.warning("⚠️ Invalid format — use numbers, commas and hyphens only. e.g. 1-5, 8, 12-15")
+
     st.divider()
     run_button = st.button(
         "▶  Convert to DITA 2.0",
@@ -187,7 +210,7 @@ with right_col:
             t0 = time.time()
 
             _status("⏳ `[EXTRACTOR]` — Parsing document structure…")
-            blocks = (extract_pdf(file_bytes) if is_pdf
+            blocks = (extract_pdf(file_bytes, page_range=page_range) if is_pdf
                       else extract_docx(file_bytes, image_folder=image_folder))
             _status(f"✅ `[EXTRACTOR]` — {len(blocks)} blocks extracted")
 
@@ -200,10 +223,18 @@ with right_col:
             topic_files = gen.generate(blocks)
             map_title   = (Path(file_name).stem
                            .replace("_", " ").replace("-", " ").title())
-            ditamap_str  = gen.generate_ditamap(topic_files, map_title=map_title)
-            ditamap_name = Path(file_name).stem + ".ditamap"
-            n_topics     = len(topic_files)
-            _status(f"✅ `[GENERATOR]` — {n_topics} topic(s) + .ditamap")
+
+            if is_bookmap:
+                map_str  = gen.generate_bookmap(topic_files, map_title=map_title)
+                map_name = Path(file_name).stem + ".ditamap"
+                map_type = "bookmap"
+            else:
+                map_str  = gen.generate_ditamap(topic_files, map_title=map_title)
+                map_name = Path(file_name).stem + ".ditamap"
+                map_type = "map"
+
+            n_topics = len(topic_files)
+            _status(f"✅ `[GENERATOR]` — {n_topics} topic(s) + .{'bookmap' if is_bookmap else 'ditamap'}")
 
             _status("⏳ `[VALIDATOR]` — Validating XML…")
             validator = Validator()
@@ -222,13 +253,15 @@ with right_col:
 
             st.session_state.results = {
                 "topic_files":  validation_results,
-                "ditamap_str":  ditamap_str,
-                "ditamap_name": ditamap_name,
+                "ditamap_str":  map_str,
+                "ditamap_name": map_name,
+                "map_type":     map_type,
                 "n_topics":     n_topics,
                 "source_name":  file_name,
                 "map_title":    map_title,
                 "elapsed":      elapsed,
                 "blocks":       blocks,
+                "is_bookmap":   is_bookmap,
             }
 
         except ExtractorError as exc:
@@ -250,6 +283,8 @@ with right_col:
         ditamap_name = res["ditamap_name"]
         n_topics     = res["n_topics"]
         map_title    = res["map_title"]
+        is_bookmap   = res.get("is_bookmap", False)
+        map_label    = "bookmap" if is_bookmap else "ditamap"
 
         st.divider()
         tabs = st.tabs(["🗺️ DITA Map", "📄 Topic XML", "✅ Validation", "📊 Stats"])
@@ -296,12 +331,12 @@ with right_col:
 
             with col_map:
                 st.download_button(
-                    "⬇️ .ditamap",
+                    f"⬇️ .{map_label}",
                     data=ditamap_str.encode("utf-8"),
                     file_name=ditamap_name,
                     mime="application/xml",
                     use_container_width=True,
-                    help="Download the DITA map referencing all topics",
+                    help=f"Download the DITA {'book' if is_bookmap else ''}map referencing all topics",
                 )
 
             with col_sel:
@@ -321,9 +356,10 @@ with right_col:
                 elif n_sel > 1:
                     sel_files  = [topic_files[i] for i in selected_indices]
                     sel_tuples = [(f, x) for f, x, _ in sel_files]
-                    scoped_map = Generator().generate_ditamap(
-                        sel_tuples,
-                        map_title=f"{map_title} (selection)",
+                    scoped_map = (
+                        Generator().generate_bookmap(sel_tuples, map_title=f"{map_title} (selection)")
+                        if is_bookmap else
+                        Generator().generate_ditamap(sel_tuples, map_title=f"{map_title} (selection)")
                     )
                     buf = io.BytesIO()
                     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

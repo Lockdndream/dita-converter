@@ -73,14 +73,68 @@ _DROP_PATTERNS = [
 ]
 
 
-def _should_drop(text: str) -> bool:
-    t = text.strip()
-    if not t:
+def _parse_page_range(page_range: str, total_pages: int) -> set[int]:
+    """
+    Parse a page range string like "1-5, 8, 12-15" into a set of
+    0-based page indices. Returns None if page_range is empty (= all pages).
+
+    Examples:
+        "1-5, 8"     → {0, 1, 2, 3, 4, 7}
+        "3"          → {2}
+        ""           → None (all pages)
+    """
+    if not page_range or not page_range.strip():
+        return None
+    indices = set()
+    for part in page_range.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_s, end_s = part.split("-", 1)
+            start = max(1, int(start_s.strip()))
+            end   = min(total_pages, int(end_s.strip()))
+            for i in range(start, end + 1):
+                indices.add(i - 1)  # convert to 0-based
+        else:
+            page_num = int(part)
+            if 1 <= page_num <= total_pages:
+                indices.add(page_num - 1)
+    return indices if indices else None
+
+
+_BLANK_PAGE_PATTERNS = [
+    re.compile(r"^this\s+page\s+(is\s+)?intentionally\s+(left\s+)?blank", re.IGNORECASE),
+    re.compile(r"^intentionally\s+(left\s+)?blank", re.IGNORECASE),
+    re.compile(r"^this\s+page\s+left\s+blank", re.IGNORECASE),
+    re.compile(r"^blank\s+page$", re.IGNORECASE),
+]
+
+
+def _is_blank_page(page_text: str) -> bool:
+    """Return True if the page contains only a blank-page notice or nothing."""
+    cleaned = page_text.strip()
+    if not cleaned:
         return True
-    if len(t) < 3:
+    lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
+    # Filter out running header/footer lines using drop patterns directly
+    meaningful = []
+    for line in lines:
+        if not line or len(line) < 3:
+            continue
+        dropped = False
+        for pat in _DROP_PATTERNS:
+            if pat.search(line):
+                dropped = True
+                break
+        if not dropped:
+            meaningful.append(line)
+    if not meaningful:
         return True
-    for pat in _DROP_PATTERNS:
-        if pat.search(t):
+    # Check if remaining content is a blank-page notice
+    full = " ".join(meaningful)
+    for pat in _BLANK_PAGE_PATTERNS:
+        if pat.match(full):
             return True
     return False
 
@@ -125,16 +179,24 @@ def _classify_line(word_group: list[dict]) -> tuple[str, int]:
     return "paragraph", 0
 
 
-def extract_pdf(file_bytes: bytes) -> list[dict]:
-    """Extract a content tree from a text-based PDF."""
+def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
+    """Extract a content tree from a text-based PDF.
+
+    Args:
+        file_bytes:  Raw bytes of the PDF file.
+        page_range:  Optional page range string e.g. "1-5, 8, 12-15".
+                     Leave empty to extract all pages.
+    """
     import pdfplumber  # type: ignore
 
     blocks: list[dict] = []
     dropped_count = 0
+    blank_pages_skipped = 0
 
     with pdfplumber.open(file_bytes if hasattr(file_bytes, "read") else
                          __import__("io").BytesIO(file_bytes)) as pdf:
 
+        total_pages = len(pdf.pages)
         total_chars = sum(len(p.extract_text() or "") for p in pdf.pages)
         if total_chars < 50:
             raise ExtractorError(
@@ -142,7 +204,21 @@ def extract_pdf(file_bytes: bytes) -> list[dict]:
                 "Please supply a text-based (digital) PDF."
             )
 
-        for page in pdf.pages:
+        # Resolve page range filter
+        page_indices = _parse_page_range(page_range, total_pages)  # None = all pages
+
+        for page_idx, page in enumerate(pdf.pages):
+
+            # ---- Page range filter (B-001) ----
+            if page_indices is not None and page_idx not in page_indices:
+                continue
+
+            # ---- Blank page detection (B-002) ----
+            page_text = page.extract_text() or ""
+            if _is_blank_page(page_text):
+                blank_pages_skipped += 1
+                continue
+
             # ---- Tables first ----
             tables = page.extract_tables()
             table_bboxes = [t.bbox for t in page.find_tables()] if tables else []
@@ -244,7 +320,8 @@ def extract_pdf(file_bytes: bytes) -> list[dict]:
     for b in blocks:
         b.setdefault("metadata", {})
     if blocks:
-        blocks[0]["metadata"]["dropped_count"] = dropped_count
+        blocks[0]["metadata"]["dropped_count"]       = dropped_count
+        blocks[0]["metadata"]["blank_pages_skipped"] = blank_pages_skipped
 
     return blocks
 
