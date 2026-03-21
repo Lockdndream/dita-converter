@@ -134,7 +134,13 @@ class Mapper:
             # ---- Note headers (already classified) ----
             if btype == "note_header":
                 note_type = meta.get("note_type", "note")
-                block["dita_element"] = f"note:{note_type}"
+                # ANSI Z535 / ISO 3864 hazard types use <hazardstatement>
+                # Plain notes use <note>
+                _HAZARD_TYPES = {"notice", "caution", "warning", "danger"}
+                if note_type in _HAZARD_TYPES:
+                    block["dita_element"] = f"hazard:{note_type}"
+                else:
+                    block["dita_element"] = f"note:{note_type}"
                 continue
 
             # ---- Inline notes ----

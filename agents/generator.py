@@ -99,6 +99,18 @@ def _safe_text(element: etree._Element, text: str) -> None:
         element.text = text
 
 
+def _apply_text(element: etree._Element, text: str, ns: str) -> None:
+    """Set element text, wrapping in <b> if the __BOLD__ sentinel is present."""
+    if not text:
+        return
+    if text.startswith("__BOLD__"):
+        clean = text[8:]  # strip sentinel
+        b_el = etree.SubElement(element, _tag(ns, "b"))
+        b_el.text = clean
+    else:
+        element.text = text
+
+
 def _tag(ns: str, local: str) -> str:
     return f"{{{ns}}}{local}"
 
@@ -484,7 +496,11 @@ class Generator:
             if de == "p":
                 flush_all()
                 p_el = etree.SubElement(parent, _tag(ns, "p"))
-                _safe_text(p_el, text)
+                if meta.get("bold") and text:
+                    b_el = etree.SubElement(p_el, _tag(ns, "b"))
+                    b_el.text = text
+                else:
+                    _safe_text(p_el, text)
                 continue
 
             # ---- Menucascade ----
@@ -517,13 +533,21 @@ class Generator:
                 ol_buffer.append(block)
                 continue
 
-            # ---- Note ----
-            if de and de.startswith("note:"):
+            # ---- Hazard statement / Note ----
+            if de and (de.startswith("note:") or de.startswith("hazard:")):
                 flush_all()
                 note_type = de.split(":", 1)[1]
-                note_el = etree.SubElement(parent, _tag(ns, "note"))
-                note_el.set("type", note_type)
-                _safe_text(note_el, text)
+                HAZARD_TYPES = {"warning", "caution", "danger", "notice"}
+                if note_type in HAZARD_TYPES:
+                    hs = etree.SubElement(parent, _tag(ns, "hazardstatement"))
+                    hs.set("type", note_type)
+                    mp = etree.SubElement(hs, _tag(ns, "messagepanel"))
+                    toh = etree.SubElement(mp, _tag(ns, "typeofhazard"))
+                    _safe_text(toh, text)
+                else:
+                    note_el = etree.SubElement(parent, _tag(ns, "note"))
+                    note_el.set("type", note_type)
+                    _safe_text(note_el, text)
                 continue
 
             # ---- Figure ----
@@ -579,40 +603,51 @@ class Generator:
                     cs.set("colname", f"col{ci}")
                     cs.set("colnum", str(ci))
 
-                def _make_row(parent_el, row_data, row_ncols):
-                    """Emit a <row> with entry elements, handling straddle markers."""
+                def _make_row(parent_el, row_data, row_ncols, is_header_row=False):
+                    """Emit a <row> with entry elements, handling straddle and bold markers."""
                     row_el = etree.SubElement(parent_el, _tag(ns, "row"))
                     ci = 0
                     while ci < row_ncols:
                         cell_val = str(row_data[ci]) if ci < len(row_data) else ""
-                        # Check if next cell is a straddle marker
                         next_val = str(row_data[ci + 1]) if ci + 1 < len(row_data) else ""
                         if next_val.startswith("__STRADDLE__"):
                             span = int(next_val.split("__")[2]) if "__" in next_val else row_ncols
                             entry = etree.SubElement(row_el, _tag(ns, "entry"))
                             entry.set("namest", f"col{ci + 1}")
                             entry.set("nameend", f"col{ci + span}")
-                            _safe_text(entry, cell_val)
-                            ci += span  # skip the spanned columns
+                            # Strip __BOLD__ from straddle cell — thead handles styling
+                            clean_val = cell_val[8:] if cell_val.startswith("__BOLD__") else cell_val
+                            if is_header_row:
+                                _safe_text(entry, clean_val)
+                            else:
+                                # Non-thead straddle: render bold explicitly
+                                _apply_text(entry, f"__BOLD__{clean_val}" if clean_val else "", ns)
+                            ci += span
                         else:
                             entry = etree.SubElement(row_el, _tag(ns, "entry"))
-                            _safe_text(entry, cell_val)
+                            if is_header_row:
+                                # thead: strip __BOLD__ — toolchain renders header bold
+                                clean_val = cell_val[8:] if cell_val.startswith("__BOLD__") else cell_val
+                                _safe_text(entry, clean_val)
+                            else:
+                                # tbody: honour __BOLD__ sentinel
+                                _apply_text(entry, cell_val, ns)
                             ci += 1
-                    # Pad if row is short
+                    # Pad missing cells
                     cells_emitted = len(row_el)
-                    for _ in range(ncols - cells_emitted):
+                    for _ in range(row_ncols - cells_emitted):
                         etree.SubElement(row_el, _tag(ns, "entry"))
 
                 # Header rows
                 thead_el = etree.SubElement(tgroup, _tag(ns, "thead"))
                 for ri in range(n_header_rows):
-                    _make_row(thead_el, rows[ri], ncols)
+                    _make_row(thead_el, rows[ri], ncols, is_header_row=True)
 
                 # Body rows
                 if len(rows) > n_header_rows:
                     tbody_el = etree.SubElement(tgroup, _tag(ns, "tbody"))
                     for row_data in rows[n_header_rows:]:
-                        _make_row(tbody_el, row_data, ncols)
+                        _make_row(tbody_el, row_data, ncols, is_header_row=False)
                 continue
 
             # ---- Definition list ----

@@ -95,7 +95,7 @@ class Validator:
             if step.find(f"{{{ns}}}cmd") is None:
                 result.warnings.append("A <step> element is missing <cmd>.")
 
-        # Notes missing @type
+        # Notes missing @type — skip hazardstatement (has different structure)
         for note in root.iter(f"{{{ns}}}note"):
             if not note.get("type"):
                 result.warnings.append("A <note> element has no @type attribute.")

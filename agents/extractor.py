@@ -172,10 +172,21 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
             band = [w for w in t_words
                     if w["top"] >= top_y - tol and w["top"] <= bot_y - tol]
             cells = [""] * n_cols
+            # Track whether each cell contains any bold words
+            cell_bold = [False] * n_cols
             for w in band:
                 c = _assign_col(w["x0"])
                 cells[c] = (cells[c] + " " + w["text"]).strip()
-            return cells
+                if "Bold" in w.get("fontname", ""):
+                    cell_bold[c] = True
+            # Encode bold into cell text using sentinel: __BOLD__{text}
+            result = []
+            for i, cell in enumerate(cells):
+                if cell_bold[i] and cell:
+                    result.append(f"__BOLD__{cell}")
+                else:
+                    result.append(cell)
+            return result
 
         rows: list[list[str]] = []
 
@@ -401,14 +412,14 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                             skip = True
                             break
                 if not skip:
-                    # Count header rows: all straddle rows + first non-straddle row
-                    n_hdr = 0
-                    for _r in rs_rows:
-                        n_hdr += 1
-                        if not any("__STRADDLE__" in str(c) for c in _r):
-                            break  # this non-straddle row is the last header row
+                    # thead = only the very first thick-bordered row (row index 0).
+                    # Subsequent thick-bordered rows (e.g. mid-table straddles) go
+                    # to tbody with bold marker so the generator can render <b>.
+                    # Rule: n_header_rows = 1 always (first row only).
+                    # Mid-table "header" rows are marked __BOLD__ by _words_in_band
+                    # so the generator wraps their text in <b>.
                     blk = make_block("table", "", is_header=True, rows=rs_rows)
-                    blk["metadata"]["n_header_rows"] = n_hdr
+                    blk["metadata"]["n_header_rows"] = 1
                     page_blocks.append((rs_y, blk))
 
             # ---- Words → lines ----
@@ -448,6 +459,11 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
             for top in sorted(lines):
                 word_group = lines[top]
                 text = " ".join(w["text"] for w in word_group).strip()
+                # Detect if the entire line is bold (all words have Bold in fontname)
+                line_is_bold = (
+                    len(word_group) > 0
+                    and all("Bold" in w.get("fontname", "") for w in word_group)
+                )
 
                 if _should_drop(text):
                     dropped_count += 1
@@ -505,7 +521,10 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                         last["text"] = last["text"] + " " + text
                         continue
 
-                page_blocks.append((top, make_block(block_type, text, level=level)))
+                blk = make_block(block_type, text, level=level)
+                if line_is_bold and block_type == "paragraph":
+                    blk["metadata"]["bold"] = True
+                page_blocks.append((top, blk))
                 prev_para = block_type if block_type == "paragraph" else None
 
             # ---- Flush page blocks in Y order ----
