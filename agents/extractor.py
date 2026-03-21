@@ -111,27 +111,27 @@ _BLANK_PAGE_PATTERNS = [
 ]
 
 
+def _should_drop(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return True
+    if len(t) < 3:
+        return True
+    for pat in _DROP_PATTERNS:
+        if pat.search(t):
+            return True
+    return False
+
+
 def _is_blank_page(page_text: str) -> bool:
     """Return True if the page contains only a blank-page notice or nothing."""
     cleaned = page_text.strip()
     if not cleaned:
         return True
     lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
-    # Filter out running header/footer lines using drop patterns directly
-    meaningful = []
-    for line in lines:
-        if not line or len(line) < 3:
-            continue
-        dropped = False
-        for pat in _DROP_PATTERNS:
-            if pat.search(line):
-                dropped = True
-                break
-        if not dropped:
-            meaningful.append(line)
+    meaningful = [l for l in lines if not _should_drop(l)]
     if not meaningful:
         return True
-    # Check if remaining content is a blank-page notice
     full = " ".join(meaningful)
     for pat in _BLANK_PAGE_PATTERNS:
         if pat.match(full):
