@@ -228,8 +228,8 @@ class Mapper:
             "WARNING": "warning",
             "CAUTION": "caution",
             "DANGER": "danger",
-            "IMPORTANT INFORMATION": "important",
-            "IMPORTANT": "important",
+            "IMPORTANT INFORMATION": "notice",
+            "IMPORTANT": "notice",
         }
         result: list[dict] = []
         for block in blocks:

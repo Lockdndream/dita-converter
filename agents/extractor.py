@@ -85,12 +85,13 @@ _ROW_SHOW_THICK = 1.5   # minimum rect height (pts) to be a header boundary rule
 _ROW_SHOW_COL_GAP = 50  # minimum X gap (pts) between columns
 
 
-def _extract_rowshow_tables(page) -> list[list[list[str]]]:
+def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
     """
     Detect and extract ROW_SHOW borderless tables from a pdfplumber page.
 
-    Returns a list of tables. Each table is a list of rows.
-    Each row is a list of cell strings. Row 0 is the header row.
+    Returns list of (rows, y_top) tuples.
+    Each row is a list of cell strings. Multiple header rows supported.
+    Straddled (spanning) cells are marked: cell[0]=text, cell[1]="__STRADDLE__{n_cols}"
     """
     from collections import defaultdict
 
@@ -99,28 +100,32 @@ def _extract_rowshow_tables(page) -> list[list[list[str]]]:
         x_tolerance=3, y_tolerance=5, extra_attrs=["fontname", "size"]
     )
 
-    # Group rects by their horizontal span (same span = same table)
     span_groups: dict = defaultdict(list)
     for r in rects:
-        if r["x1"] - r["x0"] > 50:  # ignore tiny decorative marks
+        if r["x1"] - r["x0"] > 50:
             key = (round(r["x0"], 0), round(r["x1"], 0))
             span_groups[key].append(r)
 
-    tables: list[list[list[str]]] = []
+    results: list[tuple[list[list[str]], float]] = []
 
     for (x0, x1), group in span_groups.items():
         if len(group) < 3:
-            continue  # need header-top + header-bottom + at least one data rule
+            continue
 
         group = sorted(group, key=lambda r: r["top"])
         thick = [r for r in group if (r["bottom"] - r["top"]) >= _ROW_SHOW_THICK]
         thin  = [r for r in group if (r["bottom"] - r["top"]) <  _ROW_SHOW_THICK]
 
         if len(thick) < 2:
-            continue  # no header boundaries found
+            continue
 
-        header_top    = thick[0]["top"]
-        header_bottom = thick[1]["bottom"]
+        # Each consecutive pair of thick rules = one header band
+        header_bands: list[tuple[float, float]] = []
+        for i in range(len(thick) - 1):
+            header_bands.append((thick[i]["top"], thick[i + 1]["bottom"]))
+
+        table_top     = thick[0]["top"]
+        header_bottom = thick[-1]["bottom"]
 
         row_seps = sorted([r["top"] for r in thin if r["top"] > header_bottom])
         if not row_seps:
@@ -128,17 +133,27 @@ def _extract_rowshow_tables(page) -> list[list[list[str]]]:
 
         table_bottom = thin[-1]["bottom"]
 
-        # Collect words within this table's bounding box
         t_words = [
             w for w in words
             if w["x0"] >= x0 - 5 and w["x1"] <= x1 + 5
-            and w["top"] >= header_top and w["top"] <= table_bottom + 10
+            and w["top"] >= table_top and w["top"] <= table_bottom + 10
         ]
         if not t_words:
             continue
 
-        # Infer column boundaries from X-position gaps
-        x_positions = sorted(set(round(w["x0"], 0) for w in t_words))
+        # Use last header band to infer column structure
+        # Use strict top boundary (last_hdr_top - 2) so words from earlier
+        # header bands don't contaminate the column gap detection.
+        last_hdr_top, last_hdr_bot = header_bands[-1]
+        col_ref_words = [w for w in t_words
+                         if last_hdr_top - 2 <= w["top"] <= last_hdr_bot + 2]
+        if not col_ref_words:
+            # Fallback: use all words below the first thick rule
+            col_ref_words = [w for w in t_words if w["top"] >= thick[0]["bottom"]]
+        if not col_ref_words:
+            col_ref_words = t_words
+
+        x_positions = sorted(set(round(w["x0"], 0) for w in col_ref_words))
         col_breaks = [x0]
         for i in range(1, len(x_positions)):
             if x_positions[i] - x_positions[i - 1] > _ROW_SHOW_COL_GAP:
@@ -152,9 +167,10 @@ def _extract_rowshow_tables(page) -> list[list[list[str]]]:
                     return ci
             return n_cols - 1
 
-        def _words_in_band(top_y: float, bot_y: float) -> list[str]:
+        def _words_in_band(top_y: float, bot_y: float, tight: bool = False) -> list[str]:
+            tol = 1 if tight else 2
             band = [w for w in t_words
-                    if w["top"] >= top_y - 2 and w["top"] <= bot_y + 2]
+                    if w["top"] >= top_y - tol and w["top"] <= bot_y - tol]
             cells = [""] * n_cols
             for w in band:
                 c = _assign_col(w["x0"])
@@ -163,14 +179,34 @@ def _extract_rowshow_tables(page) -> list[list[list[str]]]:
 
         rows: list[list[str]] = []
 
-        # Header row (between first two thick rules)
-        hdr = _words_in_band(header_top, header_bottom)
+        # Header rows — detect straddled (spanning) cells
+        # Strategy: if the leftmost word in a header band starts well to the
+        # right of col1's left edge, treat it as a spanning (straddle) cell.
+        col1_right_threshold = col_breaks[0] + (col_breaks[1] - col_breaks[0]) * 0.6
 
-        # Skip merged title rows above the real column headers:
-        # If the header band contains a second band immediately below that
-        # also looks like column labels (both cells non-empty), prefer that.
-        # Otherwise use as-is.
-        rows.append(hdr)
+        for hdr_top, hdr_bot in header_bands:
+            hdr = _words_in_band(hdr_top, hdr_bot, tight=True)
+            non_empty = [i for i, c in enumerate(hdr) if c.strip()]
+
+            band_words = [w for w in t_words
+                          if w["top"] >= hdr_top - 1 and w["top"] <= hdr_bot - 1]
+            leftmost_x = min((w["x0"] for w in band_words), default=x0)
+
+            is_straddle = (
+                n_cols > 1
+                and leftmost_x > col1_right_threshold
+                and len(non_empty) > 0
+            )
+
+            if is_straddle:
+                all_text = " ".join(w["text"] for w in
+                                    sorted(band_words, key=lambda w: w["x0"]))
+                straddle_row = [""] * n_cols
+                straddle_row[0] = all_text.strip()
+                straddle_row[1] = f"__STRADDLE__{n_cols}"
+                rows.append(straddle_row)
+            else:
+                rows.append(hdr)
 
         # Data rows
         band_tops = [header_bottom] + row_seps
@@ -180,9 +216,9 @@ def _extract_rowshow_tables(page) -> list[list[list[str]]]:
             if any(c.strip() for c in row):
                 rows.append(row)
 
-        tables.append(rows)
+        results.append((rows, table_top))
 
-    return tables
+    return results
 
 
 def _parse_page_range(page_range: str, total_pages: int) -> set[int]:
@@ -332,37 +368,48 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 continue
 
             # ---- Tables: pdfplumber bordered + ROW_SHOW borderless ----
-            # Pass 1: pdfplumber's standard table detector (bordered tables)
-            std_tables = page.extract_tables()
-            std_bboxes: list = []
-            if std_tables:
-                std_bboxes = [t.bbox for t in page.find_tables()]
+            # We collect page-level blocks with Y positions so we can
+            # reorder them correctly (tables are extracted before words by
+            # pdfplumber, which would put them before any lead-in paragraph).
+            page_blocks: list[tuple[float, dict]] = []  # (y_pos, block)
 
-            for table_data in std_tables:
+            # Pass 1: pdfplumber's standard table detector (bordered tables)
+            std_tables   = page.extract_tables()
+            std_bboxes: list = []
+            std_table_objs = []
+            if std_tables:
+                std_table_objs = page.find_tables()
+                std_bboxes = [t.bbox for t in std_table_objs]
+
+            for ti, table_data in enumerate(std_tables):
                 if not table_data:
                     continue
                 rows = [[cell or "" for cell in row] for row in table_data]
-                blocks.append(make_block("table", "", is_header=True, rows=rows))
+                y_pos = std_bboxes[ti][1] if ti < len(std_bboxes) else 0.0
+                page_blocks.append((y_pos, make_block("table", "", is_header=True, rows=rows)))
 
             # Pass 2: ROW_SHOW borderless table detector
-            # Skip areas already covered by bordered tables
-            for rs_table in _extract_rowshow_tables(page):
-                if not rs_table:
+            for rs_rows, rs_y in _extract_rowshow_tables(page):
+                if not rs_rows:
                     continue
-                # De-duplicate: skip if this table's header Y overlaps a bordered table bbox
-                # (pdfplumber already got it)
+                # Skip if Y overlaps a bordered table already captured
                 skip = False
-                if std_bboxes and rs_table:
-                    # Get Y of first row content — approximate from word positions
-                    for bbox in std_bboxes:
-                        # bbox = (x0, top, x1, bottom)
-                        if len(bbox) == 4:
-                            _, btop, _, bbot = bbox
-                            if btop <= 150 <= bbot:  # rough overlap check
-                                skip = True
-                                break
+                for bbox in std_bboxes:
+                    if len(bbox) == 4:
+                        _, btop, _, bbot = bbox
+                        if btop - 20 <= rs_y <= bbot + 20:
+                            skip = True
+                            break
                 if not skip:
-                    blocks.append(make_block("table", "", is_header=True, rows=rs_table))
+                    # Count header rows: all straddle rows + first non-straddle row
+                    n_hdr = 0
+                    for _r in rs_rows:
+                        n_hdr += 1
+                        if not any("__STRADDLE__" in str(c) for c in _r):
+                            break  # this non-straddle row is the last header row
+                    blk = make_block("table", "", is_header=True, rows=rs_rows)
+                    blk["metadata"]["n_header_rows"] = n_hdr
+                    page_blocks.append((rs_y, blk))
 
             # ---- Words → lines ----
             words = page.extract_words(
@@ -373,11 +420,29 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 extra_attrs=["fontname", "size"],
             )
 
+            # Build set of Y ranges to exclude — areas covered by extracted tables
+            # This prevents duplicate blocks (e.g. "IMPORTANT INFORMATION" extracted
+            # both as a bordered table AND as a word-level line)
+            excluded_y_bands: list[tuple[float, float]] = []
+            for bbox in std_bboxes:
+                if len(bbox) == 4:
+                    excluded_y_bands.append((bbox[1] - 2, bbox[3] + 2))
+            for _, rs_y in _extract_rowshow_tables(page):
+                # ROW_SHOW tables: exclude their full Y range
+                pass  # ROW_SHOW already de-duped via page_blocks; skip here
+
+            def _in_table_area(y: float) -> bool:
+                for y0, y1 in excluded_y_bands:
+                    if y0 <= y <= y1:
+                        return True
+                return False
+
             # Group words into lines by top-coordinate
             lines: dict[float, list] = {}
             for w in words:
                 top = round(w["top"], 1)
-                lines.setdefault(top, []).append(w)
+                if not _in_table_area(top):
+                    lines.setdefault(top, []).append(w)
 
             prev_para = None
             for top in sorted(lines):
@@ -400,7 +465,7 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                     text = re.sub(r"^[•–\-▪◆●○■□▸▹►]\s*", "", text)
                     block_type = "list_item"
                     meta = {"list_kind": "bullet"}
-                    blocks.append(make_block(block_type, text, metadata=meta))
+                    page_blocks.append((top, make_block(block_type, text, metadata=meta)))
                     prev_para = None
                     continue
 
@@ -410,39 +475,42 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                     text = num_match.group(2)
                     block_type = "list_item"
                     meta = {"list_kind": "numbered", "num": int(num_match.group(1))}
-                    blocks.append(make_block(block_type, text, metadata=meta))
+                    page_blocks.append((top, make_block(block_type, text, metadata=meta)))
                     prev_para = None
                     continue
 
                 # Figure caption
                 if re.match(r"^Figure\s+\d+\s*:", text, re.IGNORECASE):
-                    blocks.append(make_block("figure", text))
+                    page_blocks.append((top, make_block("figure", text)))
                     prev_para = None
                     continue
 
                 # Inline note
                 if re.match(r"^Notes?:", text, re.IGNORECASE):
-                    blocks.append(make_block("note_inline", text))
+                    page_blocks.append((top, make_block("note_inline", text)))
                     prev_para = None
                     continue
 
                 # Code block signals
                 code_signals = ("telnet ", "C:\\>", "$ ", "http://")
                 if any(text.startswith(s) for s in code_signals):
-                    blocks.append(make_block("code_block", text))
+                    page_blocks.append((top, make_block("code_block", text)))
                     prev_para = None
                     continue
 
                 # Paragraph merging (continuation lines at same style)
-                if block_type == "paragraph" and prev_para is not None:
-                    # Merge if previous was also a paragraph and ends mid-sentence
-                    last = blocks[-1]
+                if block_type == "paragraph" and prev_para is not None and page_blocks:
+                    last = page_blocks[-1][1]
                     if last["type"] == "paragraph" and not last["text"].endswith((".", ":", "?")):
                         last["text"] = last["text"] + " " + text
                         continue
 
-                blocks.append(make_block(block_type, text, level=level))
+                page_blocks.append((top, make_block(block_type, text, level=level)))
                 prev_para = block_type if block_type == "paragraph" else None
+
+            # ---- Flush page blocks in Y order ----
+            page_blocks.sort(key=lambda x: x[0])
+            blocks.extend(b for _, b in page_blocks)
 
     # Tag how many blocks were dropped
     for b in blocks:

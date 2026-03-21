@@ -557,6 +557,18 @@ class Generator:
                 rows = block.get("rows", [])
                 if not rows:
                     continue
+
+                # Use n_header_rows from extractor metadata if available,
+                # otherwise fall back to straddle-based detection
+                n_header_rows = block.get("metadata", {}).get("n_header_rows", None)
+                if n_header_rows is None:
+                    n_header_rows = 1
+                    for ri in range(1, len(rows)):
+                        if any("__STRADDLE__" in str(c) for c in rows[ri]):
+                            n_header_rows = ri + 1
+                        else:
+                            break
+
                 ncols = max(len(r) for r in rows)
                 tbl = etree.SubElement(parent, _tag(ns, "table"))
                 tbl.set("frame", "all")
@@ -566,23 +578,41 @@ class Generator:
                     cs = etree.SubElement(tgroup, _tag(ns, "colspec"))
                     cs.set("colname", f"col{ci}")
                     cs.set("colnum", str(ci))
-                # Header row
-                thead_el = etree.SubElement(tgroup, _tag(ns, "thead"))
-                hrow = etree.SubElement(thead_el, _tag(ns, "row"))
-                for cell in rows[0]:
-                    entry = etree.SubElement(hrow, _tag(ns, "entry"))
-                    _safe_text(entry, str(cell))
-                # Body rows
-                if len(rows) > 1:
-                    tbody_el = etree.SubElement(tgroup, _tag(ns, "tbody"))
-                    for row_data in rows[1:]:
-                        row_el = etree.SubElement(tbody_el, _tag(ns, "row"))
-                        for ci, cell in enumerate(row_data):
+
+                def _make_row(parent_el, row_data, row_ncols):
+                    """Emit a <row> with entry elements, handling straddle markers."""
+                    row_el = etree.SubElement(parent_el, _tag(ns, "row"))
+                    ci = 0
+                    while ci < row_ncols:
+                        cell_val = str(row_data[ci]) if ci < len(row_data) else ""
+                        # Check if next cell is a straddle marker
+                        next_val = str(row_data[ci + 1]) if ci + 1 < len(row_data) else ""
+                        if next_val.startswith("__STRADDLE__"):
+                            span = int(next_val.split("__")[2]) if "__" in next_val else row_ncols
                             entry = etree.SubElement(row_el, _tag(ns, "entry"))
-                            _safe_text(entry, str(cell))
-                        # Pad missing cells
-                        for _ in range(ncols - len(row_data)):
-                            etree.SubElement(row_el, _tag(ns, "entry"))
+                            entry.set("namest", f"col{ci + 1}")
+                            entry.set("nameend", f"col{ci + span}")
+                            _safe_text(entry, cell_val)
+                            ci += span  # skip the spanned columns
+                        else:
+                            entry = etree.SubElement(row_el, _tag(ns, "entry"))
+                            _safe_text(entry, cell_val)
+                            ci += 1
+                    # Pad if row is short
+                    cells_emitted = len(row_el)
+                    for _ in range(ncols - cells_emitted):
+                        etree.SubElement(row_el, _tag(ns, "entry"))
+
+                # Header rows
+                thead_el = etree.SubElement(tgroup, _tag(ns, "thead"))
+                for ri in range(n_header_rows):
+                    _make_row(thead_el, rows[ri], ncols)
+
+                # Body rows
+                if len(rows) > n_header_rows:
+                    tbody_el = etree.SubElement(tgroup, _tag(ns, "tbody"))
+                    for row_data in rows[n_header_rows:]:
+                        _make_row(tbody_el, row_data, ncols)
                 continue
 
             # ---- Definition list ----

@@ -55,7 +55,7 @@ table_map:
 note_map:
   - pattern: "IMPORTANT INFORMATION"
     element: note
-    type: important
+    type: notice
     match: exact_block_header
   - pattern: "^WARNING"
     element: note
