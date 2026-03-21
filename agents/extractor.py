@@ -68,8 +68,9 @@ _DROP_PATTERNS = [
     re.compile(r"^Page \d+"),
     re.compile(r"MDE-\w+.+\d{4}$"),
     re.compile(r"^©\s*\d{4}"),
-    re.compile(r"^Table of Contents"),
-    re.compile(r"^Related Documents"),
+    # Note: "Table of Contents" and "Related Documents" are NOT dropped here —
+    # they appear as section headings and also as table contexts on page 1.
+    # The ROW_SHOW detector handles their table rows correctly.
 ]
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ _DROP_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 _ROW_SHOW_THICK = 1.5   # minimum rect height (pts) to be a header boundary rule
-_ROW_SHOW_COL_GAP = 50  # minimum X gap (pts) between columns
+_ROW_SHOW_COL_GAP = 40  # fallback minimum — overridden by dynamic calc below
 
 
 def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
@@ -141,29 +142,48 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
         if not t_words:
             continue
 
-        # Use last header band to infer column structure
-        # Use strict top boundary (last_hdr_top - 2) so words from earlier
-        # header bands don't contaminate the column gap detection.
-        last_hdr_top, last_hdr_bot = header_bands[-1]
-        col_ref_words = [w for w in t_words
-                         if last_hdr_top - 2 <= w["top"] <= last_hdr_bot + 2]
-        if not col_ref_words:
-            # Fallback: use all words below the first thick rule
-            col_ref_words = [w for w in t_words if w["top"] >= thick[0]["bottom"]]
-        if not col_ref_words:
-            col_ref_words = t_words
+        # Infer column boundaries — use the header band with the most
+        # distinct X start positions (most complete column definition).
+        # This handles cases where the last header band is a straddle row
+        # with fewer columns than the actual column-header row.
+        best_col_words = None
+        best_x_count = 0
+        for hdr_top_c, hdr_bot_c in header_bands:
+            cw = [w for w in t_words
+                  if hdr_top_c - 1 <= w["top"] <= hdr_bot_c - 1]
+            # Count distinct X positions with meaningful gaps
+            xs = sorted(set(round(w["x0"], 0) for w in cw))
+            distinct = 1
+            for xi in range(1, len(xs)):
+                if xs[xi] - xs[xi-1] > _ROW_SHOW_COL_GAP:
+                    distinct += 1
+            if distinct > best_x_count:
+                best_x_count = distinct
+                best_col_words = cw
+        if not best_col_words:
+            best_col_words = [w for w in t_words if w["top"] >= thick[0]["bottom"]]
+        if not best_col_words:
+            best_col_words = t_words
 
-        x_positions = sorted(set(round(w["x0"], 0) for w in col_ref_words))
+        x_positions = sorted(set(round(w["x0"], 0) for w in best_col_words))
+        # Dynamic column gap threshold: 10% of table width, minimum 30pt.
+        # This handles both wide tables (e.g. 3-col Related Docs ~406pt wide,
+        # threshold ~41pt) and narrow tables (TOC ~178pt wide, threshold 30pt).
+        _dyn_col_gap = max(30, (x1 - x0) * 0.10)
+        last_hdr_top, last_hdr_bot = header_bands[-1]
+
         col_breaks = [x0]
         for i in range(1, len(x_positions)):
-            if x_positions[i] - x_positions[i - 1] > _ROW_SHOW_COL_GAP:
+            if x_positions[i] - x_positions[i - 1] > _dyn_col_gap:
                 col_breaks.append(x_positions[i])
         col_breaks.append(x1 + 10)
         n_cols = len(col_breaks) - 1
 
         def _assign_col(wx: float) -> int:
+            # Use 2pt left tolerance to handle float rounding between
+            # word x0 (raw PDF units) and col_breaks (rounded rect x0).
             for ci in range(len(col_breaks) - 1):
-                if col_breaks[ci] <= wx < col_breaks[ci + 1]:
+                if col_breaks[ci] - 2 <= wx < col_breaks[ci + 1]:
                     return ci
             return n_cols - 1
 
@@ -172,14 +192,19 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
             band = [w for w in t_words
                     if w["top"] >= top_y - tol and w["top"] <= bot_y - tol]
             cells = [""] * n_cols
-            # Track whether each cell contains any bold words
             cell_bold = [False] * n_cols
+            cell_last_word_idx = [-1] * n_cols  # track last word position per cell
             for w in band:
+                tm = _tm_type(w)
                 c = _assign_col(w["x0"])
-                cells[c] = (cells[c] + " " + w["text"]).strip()
-                if "Bold" in w.get("fontname", ""):
-                    cell_bold[c] = True
-            # Encode bold into cell text using sentinel: __BOLD__{text}
+                if tm is not None:
+                    # Append TM sentinel to the last text in this cell
+                    if cells[c]:
+                        cells[c] = _encode_tm(cells[c], tm)
+                else:
+                    cells[c] = (cells[c] + " " + w["text"]).strip()
+                    if "Bold" in w.get("fontname", ""):
+                        cell_bold[c] = True
             result = []
             for i, cell in enumerate(cells):
                 if cell_bold[i] and cell:
@@ -193,7 +218,7 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
         # Header rows — detect straddled (spanning) cells
         # Strategy: if the leftmost word in a header band starts well to the
         # right of col1's left edge, treat it as a spanning (straddle) cell.
-        col1_right_threshold = col_breaks[0] + (col_breaks[1] - col_breaks[0]) * 0.6
+        col1_right_threshold = col_breaks[0] + (col_breaks[1] - col_breaks[0]) * 0.5
 
         for hdr_top, hdr_bot in header_bands:
             hdr = _words_in_band(hdr_top, hdr_bot, tight=True)
@@ -338,6 +363,33 @@ def _classify_line(word_group: list[dict]) -> tuple[str, int]:
     return "paragraph", 0
 
 
+
+# ---------------------------------------------------------------------------
+# Trademark / superscript detection
+# ---------------------------------------------------------------------------
+_TM_SYMBOLS = {
+    "®": "reg",
+    "®": "reg",
+    "™": "tm",
+    "™": "tm",
+    "SM": "service",   # only when superscript (size <= 6)
+}
+_TM_SUPERSCRIPT_SIZE = 6.0  # pt — words at this size or smaller are superscripts
+
+
+def _tm_type(word: dict) -> str | None:
+    """Return tm type if this word is a trademark superscript, else None."""
+    text = word.get("text", "").strip()
+    size = word.get("size", 99)
+    if size > _TM_SUPERSCRIPT_SIZE:
+        return None
+    return _TM_SYMBOLS.get(text)
+
+
+def _encode_tm(text: str, tm_type: str) -> str:
+    """Append a __TM__{type}__ sentinel to the preceding text."""
+    return text.rstrip() + f"__TM__{tm_type}__"
+
 def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
     """Extract a content tree from a text-based PDF.
 
@@ -449,11 +501,32 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 return False
 
             # Group words into lines by top-coordinate
+            # Superscript TM symbols (size <= 6) are merged into the
+            # preceding line rather than creating their own line.
             lines: dict[float, list] = {}
             for w in words:
                 top = round(w["top"], 1)
-                if not _in_table_area(top):
-                    lines.setdefault(top, []).append(w)
+                if _in_table_area(top):
+                    continue
+                tm = _tm_type(w)
+                if tm is not None:
+                    # Find the most recent line above this superscript (within 8pt)
+                    parent_top = None
+                    for lt in sorted(lines.keys(), reverse=True):
+                        if abs(top - lt) <= 8:
+                            parent_top = lt
+                            break
+                    if parent_top is not None:
+                        # Tag the last word in that line with TM sentinel
+                        parent_line = lines[parent_top]
+                        if parent_line:
+                            last = parent_line[-1]
+                            # Create a synthetic word with TM-encoded text
+                            tagged = dict(last)
+                            tagged["text"] = _encode_tm(last["text"], tm)
+                            parent_line[-1] = tagged
+                        continue  # don't add superscript as its own word
+                lines.setdefault(top, []).append(w)
 
             prev_para = None
             for top in sorted(lines):

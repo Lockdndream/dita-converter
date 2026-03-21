@@ -94,21 +94,103 @@ def _detect_topic_type(chunk: list[dict]) -> str:
     return "topic"
 
 
+def _apply_inline(element: etree._Element, text: str, ns: str,
+                  bold: bool = False) -> None:
+    """
+    Set element content handling __TM__{type}__ and __BOLD__ sentinels.
+
+    Sentinel format: "some text wordname__TM__{type}__ more text"
+    The word immediately before __TM__{type}__ becomes the <tm> content:
+      → "some text <tm tmtype='{type}'>wordname</tm> more text"
+
+    __BOLD__ prefix wraps everything in <b>.
+    """
+    import re as _re
+    if not text:
+        return
+
+    # Strip __BOLD__ prefix
+    if text.startswith("__BOLD__"):
+        bold = True
+        text = text[8:]
+
+    # Wrap in <b> if bold
+    if bold:
+        container = etree.SubElement(element, _tag(ns, "b"))
+    else:
+        container = element
+
+    # Split on TM sentinels — the word before the sentinel is the tm content.
+    # Pattern: (text_before_word)(tm_word)__TM__(type)__(text_after)
+    # We use re.split on __TM__{type}__ to get alternating [text, type, text, type...]
+    parts = _re.split(r"__TM__([a-z]+)__", text)
+    # parts[0]   = text before first TM
+    # parts[1]   = first tm_type
+    # parts[2]   = text between first and second TM
+    # etc.
+
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            # Plain text — but if next part is a TM type, extract last word into <tm>
+            is_last = (i == len(parts) - 1)
+            if not is_last:
+                # Next part is a TM type — extract last word of this segment
+                stripped = part.rstrip()
+                last_space = stripped.rfind(" ")
+                if last_space >= 0:
+                    pre_text  = stripped[:last_space + 1]  # text before tm word
+                    tm_word   = stripped[last_space + 1:]  # the tm word itself
+                else:
+                    pre_text  = ""
+                    tm_word   = stripped
+
+                # Emit pre_text as plain
+                if pre_text:
+                    _append_to(container, pre_text)
+
+                # The <tm> element will be emitted in the next (odd) iteration
+                # Store tm_word so the next iteration can use it
+                parts[i] = ""           # clear — already handled
+                parts[i + 1] = (tm_word, parts[i + 1])  # bundle (word, type)
+            else:
+                # Last segment — just plain text
+                if part:
+                    _append_to(container, part)
+        else:
+            # TM marker — may be (tm_word, type) tuple from above, or plain type string
+            if isinstance(part, tuple):
+                tm_word, tm_type = part
+            else:
+                tm_word = ""
+                tm_type = part
+
+            tm_el = etree.SubElement(container, _tag(ns, "tm"))
+            tm_el.set("tmtype", tm_type)
+            tm_el.text = tm_word if tm_word else None
+            tm_el.tail = ""
+
+
+def _append_to(element: etree._Element, text: str) -> None:
+    """Append text to element — as .text if no children, else last child's .tail."""
+    if not text:
+        return
+    children = list(element)
+    if not children:
+        element.text = (element.text or "") + text
+    else:
+        last = children[-1]
+        last.tail = (last.tail or "") + text
+
+
 def _safe_text(element: etree._Element, text: str) -> None:
+    """Simple text setter — no sentinel processing. For structural elements."""
     if text:
         element.text = text
 
 
 def _apply_text(element: etree._Element, text: str, ns: str) -> None:
-    """Set element text, wrapping in <b> if the __BOLD__ sentinel is present."""
-    if not text:
-        return
-    if text.startswith("__BOLD__"):
-        clean = text[8:]  # strip sentinel
-        b_el = etree.SubElement(element, _tag(ns, "b"))
-        b_el.text = clean
-    else:
-        element.text = text
+    """Apply text with __BOLD__ and __TM__ sentinel handling."""
+    _apply_inline(element, text, ns)
 
 
 def _tag(ns: str, local: str) -> str:
@@ -496,11 +578,7 @@ class Generator:
             if de == "p":
                 flush_all()
                 p_el = etree.SubElement(parent, _tag(ns, "p"))
-                if meta.get("bold") and text:
-                    b_el = etree.SubElement(p_el, _tag(ns, "b"))
-                    b_el.text = text
-                else:
-                    _safe_text(p_el, text)
+                _apply_inline(p_el, text, ns, bold=meta.get("bold", False))
                 continue
 
             # ---- Menucascade ----
@@ -615,23 +693,26 @@ class Generator:
                             entry = etree.SubElement(row_el, _tag(ns, "entry"))
                             entry.set("namest", f"col{ci + 1}")
                             entry.set("nameend", f"col{ci + span}")
-                            # Strip __BOLD__ from straddle cell — thead handles styling
-                            clean_val = cell_val[8:] if cell_val.startswith("__BOLD__") else cell_val
+                            # Strip __BOLD__ from straddle cell value for clean_val
+                            import re as _re
+                            clean_val = _re.sub(r'__TM__[a-z]+__', '', cell_val)
+                            clean_val = clean_val[8:] if clean_val.startswith("__BOLD__") else clean_val
                             if is_header_row:
-                                _safe_text(entry, clean_val)
+                                _safe_text(entry, clean_val.strip())
                             else:
                                 # Non-thead straddle: render bold explicitly
-                                _apply_text(entry, f"__BOLD__{clean_val}" if clean_val else "", ns)
+                                _apply_inline(entry, f"__BOLD__{clean_val.strip()}" if clean_val.strip() else "", ns)
                             ci += span
                         else:
                             entry = etree.SubElement(row_el, _tag(ns, "entry"))
                             if is_header_row:
-                                # thead: strip __BOLD__ — toolchain renders header bold
-                                clean_val = cell_val[8:] if cell_val.startswith("__BOLD__") else cell_val
-                                _safe_text(entry, clean_val)
+                                # thead: strip sentinels — toolchain renders header bold
+                                import re as _re
+                                clean_val = _re.sub(r'__TM__[a-z]+__', '', cell_val)
+                                clean_val = clean_val[8:] if clean_val.startswith("__BOLD__") else clean_val
+                                _safe_text(entry, clean_val.strip())
                             else:
-                                # tbody: honour __BOLD__ sentinel
-                                _apply_text(entry, cell_val, ns)
+                                _apply_inline(entry, cell_val, ns)
                             ci += 1
                     # Pad missing cells
                     cells_emitted = len(row_el)
