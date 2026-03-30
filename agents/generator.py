@@ -31,13 +31,14 @@ from typing import Any
 DITA2_NS = "https://docs.oasis-open.org/dita/ns/2.0"
 DITA2_NS_MAP = {None: DITA2_NS}
 
-_VALID_TOPIC_TYPES = {"concept", "task", "reference", "topic"}
+_VALID_TOPIC_TYPES = {"concept", "task", "reference", "topic", "ditabase"}
 
 _DOCTYPE_MAP = {
     "concept":   '<!DOCTYPE concept PUBLIC "-//OASIS//DTD DITA 2.0 Concept//EN" "concept.dtd">',
     "task":      '<!DOCTYPE task PUBLIC "-//OASIS//DTD DITA 2.0 Task//EN" "task.dtd">',
     "reference": '<!DOCTYPE reference PUBLIC "-//OASIS//DTD DITA 2.0 Reference//EN" "reference.dtd">',
     "topic":     '<!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA 2.0 Topic//EN" "topic.dtd">',
+    "ditabase":  '<!DOCTYPE dita PUBLIC "-//OASIS//DTD DITA 2.0 Composite//EN" "ditabase.dtd">',
 }
 
 _BODY_ELEM = {
@@ -45,6 +46,7 @@ _BODY_ELEM = {
     "task":      "taskbody",
     "reference": "refbody",
     "topic":     "body",
+    "ditabase":  None,   # ditabase has no body — children are typed topics
 }
 
 
@@ -62,15 +64,29 @@ def _safe_filename(title: str, index: int) -> str:
 
 def _detect_topic_type(chunk: list[dict]) -> str:
     """
-    Detect the DITA topic type for a single chunk of blocks.
+    Detect the DITA topic type for a chunk of blocks.
 
     Rules (in priority order):
-      1. Any step element            → task
-      2. Majority body blocks tables → reference
-      3. Has prose paragraphs        → concept
-      4. Ambiguous / very short      → topic
+      1. Title first word = "Appendix"  → reference (always)
+      2. Title = "Introduction"         → concept (section-based)
+      3. Any step element present       → task (child of ditabase)
+      4. Majority tables/dl             → reference (child of ditabase)
+      5. Has prose paragraphs           → concept (child of ditabase)
+      6. Default                        → topic (child of ditabase)
+
+    Note: the caller (_render_topic) wraps non-intro, non-appendix topics
+    in a <ditabase> root — this function returns the CHILD type.
     """
     elements = [b.get("dita_element") for b in chunk]
+
+    # Rule 1: Appendix → reference
+    for b in chunk:
+        if b.get("dita_element") in ("title", "section_title"):
+            title_words = b.get("text", "").strip().split()
+            if title_words and title_words[0].lower() == "appendix":
+                return "reference"
+            break
+
     body_elements = [e for e in elements if e not in (
         "title", "section_title", "sectiondiv_title", "dropped", None
     )]
@@ -78,9 +94,11 @@ def _detect_topic_type(chunk: list[dict]) -> str:
     if not body_elements:
         return "topic"
 
+    # Rule 3: steps → task
     if "step" in elements:
         return "task"
 
+    # Rule 4: majority tables → reference
     table_count = sum(1 for e in body_elements if e in ("table", "dl"))
     para_count  = sum(1 for e in body_elements if e == "p")
     total = len(body_elements)
@@ -88,6 +106,7 @@ def _detect_topic_type(chunk: list[dict]) -> str:
     if total > 0 and table_count / total >= 0.5:
         return "reference"
 
+    # Rule 5: prose → concept
     if para_count > 0:
         return "concept"
 
@@ -449,12 +468,41 @@ class Generator:
             sd = etree.SubElement(root, _tag(ns, "shortdesc"))
             _safe_text(sd, first_para)
 
-        # Body element
-        body_tag = _BODY_ELEM.get(topic_type, "body")
-        body = etree.SubElement(root, _tag(ns, body_tag))
+        # ── Determine root structure ─────────────────────────────────────────
+        # Introduction → concept with <section> for H2/H3
+        # Appendix     → reference (detected via topic_type already)
+        # Everything else → ditabase root containing one typed child topic,
+        #   with H2/H3 becoming additional sibling typed child topics.
+        is_intro    = "introduction" in title_text.lower()
+        is_appendix = topic_type == "reference" and                       title_text.strip().split()[0:1] == ["Appendix"] if title_text else False
+        use_ditabase = not is_intro and not is_appendix
 
-        # Render remaining blocks
-        self._render_blocks(blocks, body, ns, title_text, first_para)
+        if use_ditabase:
+            # Rewrap: root = <dita>, first child = typed topic
+            root.tag = _tag(ns, "dita")
+            # Remove title/shortdesc from dita root — they go on child topic
+            for child in list(root):
+                root.remove(child)
+
+            # First child topic
+            child_topic = etree.SubElement(root, _tag(ns, topic_type))
+            child_topic.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
+            child_title = etree.SubElement(child_topic, _tag(ns, "title"))
+            _safe_text(child_title, title_text)
+            if first_para:
+                child_sd = etree.SubElement(child_topic, _tag(ns, "shortdesc"))
+                _safe_text(child_sd, first_para)
+            body_tag = _BODY_ELEM.get(topic_type, "body")
+            body = etree.SubElement(child_topic, _tag(ns, body_tag))
+        else:
+            # Concept (intro) or reference (appendix) — single typed root
+            body_tag = _BODY_ELEM.get(topic_type, "body")
+            body = etree.SubElement(root, _tag(ns, body_tag))
+
+        # Render blocks — H2/H3 handling depends on context
+        self._render_blocks(blocks, body, ns, title_text, first_para,
+                            is_introduction=is_intro, topic_type=topic_type,
+                            dita_root=root if use_ditabase else None)
 
         # Serialise
         xml_bytes = etree.tostring(
@@ -466,7 +514,11 @@ class Generator:
         xml_str = xml_bytes.decode("utf-8")
 
         # Prepend DOCTYPE
-        doctype = _DOCTYPE_MAP.get(topic_type, _DOCTYPE_MAP["topic"])
+        actual_root = etree.QName(root.tag).localname
+        if actual_root == "dita":
+            doctype = _DOCTYPE_MAP["ditabase"]
+        else:
+            doctype = _DOCTYPE_MAP.get(topic_type, _DOCTYPE_MAP["topic"])
         decl_end = xml_str.index("?>") + 2
         xml_str = xml_str[:decl_end] + "\n" + doctype + xml_str[decl_end:]
 
@@ -483,6 +535,9 @@ class Generator:
         ns: str,
         title_text: str,
         first_para_text: str | None,
+        is_introduction: bool = False,
+        topic_type: str = "concept",
+        dita_root: etree._Element | None = None,
     ) -> None:
 
         current_section: etree._Element | None = None
@@ -563,13 +618,30 @@ class Generator:
                 _safe_text(sec_title, text)
                 continue
 
-            # ---- sectiondiv_title: open new <div> inside section ----
+            # ---- sectiondiv_title: H2/H3/H4 heading ----
+            # Introduction → <section><title> inside the single concept body
+            # Ditabase     → new sibling typed topic appended to <dita> root
             if de == "sectiondiv_title":
                 flush_all()
-                parent = current_section or body
-                current_sectiondiv = etree.SubElement(parent, _tag(ns, "div"))
-                div_title = etree.SubElement(current_sectiondiv, _tag(ns, "title"))
-                _safe_text(div_title, text)
+                if is_introduction:
+                    # Introduction: <section> with <title>
+                    parent = current_section or body
+                    current_sectiondiv = etree.SubElement(parent, _tag(ns, "section"))
+                    sec_title = etree.SubElement(current_sectiondiv, _tag(ns, "title"))
+                    _safe_text(sec_title, text)
+                else:
+                    # Ditabase: sibling typed topic on the <dita> root
+                    sub_type = _detect_topic_type([block])
+                    sub_body_tag = _BODY_ELEM.get(sub_type, "body")
+                    anchor = dita_root if dita_root is not None else body.getparent()
+                    sibling = etree.SubElement(anchor, _tag(ns, sub_type))
+                    sib_title = etree.SubElement(sibling, _tag(ns, "title"))
+                    _safe_text(sib_title, text)
+                    sib_body = etree.SubElement(sibling, _tag(ns, sub_body_tag))
+                    # Redirect content into sibling body
+                    body = sib_body
+                    current_section = None
+                    current_sectiondiv = None
                 continue
 
             parent = current_sectiondiv or current_section or body
@@ -751,9 +823,9 @@ class Generator:
             if de in ("dropped", None):
                 continue
 
-            # ---- Generic fallback ----
-            flush_all()
-            fb = etree.SubElement(parent, _tag(ns, "p"))
-            _safe_text(fb, text)
+            # ---- Generic fallback — silently drop unmapped blocks ----
+            # Writers don't use fallback syntax; unknown blocks are dropped
+            # rather than emitting stray <p> elements that corrupt structure.
+            pass  # drop
 
         flush_all()
