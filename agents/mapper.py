@@ -58,10 +58,6 @@ class Mapper:
         self._ref_signals = [
             s.lower() for s in self.rules.get("topic_type_signals", {}).get("reference", [])
         ]
-        self._abbr_signals = [
-            s.lower() for s in
-            self.rules.get("table_map", {}).get("abbreviation_signals", [])
-        ]
         self._ui_pattern = re.compile(
             self.rules.get("ui_path_pattern", r".+\s*>\s*.+")
         )
@@ -135,12 +131,25 @@ class Mapper:
             if btype == "note_header":
                 note_type = meta.get("note_type", "note")
                 # ANSI Z535 / ISO 3864 hazard types use <hazardstatement>
-                # Plain notes use <note>
                 _HAZARD_TYPES = {"notice", "caution", "warning", "danger"}
                 if note_type in _HAZARD_TYPES:
                     block["dita_element"] = f"hazard:{note_type}"
                 else:
-                    block["dita_element"] = f"note:{note_type}"
+                    # Distinguish real inline notes from section subheadings.
+                    # In MDE/FrameMaker docs, 15pt bold text is used for section
+                    # sub-headings ("Purpose", "Kit Numbers and Descriptions",
+                    # "Table of Contents", etc.) as well as for genuine "Note:"
+                    # callout headers.  If the text doesn't start with a standard
+                    # note keyword it is a sub-heading → sectiondiv_title.
+                    _NOTE_KEYWORDS = {"note", "notes", "notice", "tip", "important"}
+                    first_word = (
+                        text.strip().split()[0].lower().rstrip(":")
+                        if text.strip() else ""
+                    )
+                    if first_word in _NOTE_KEYWORDS or not text.strip():
+                        block["dita_element"] = "note:note"
+                    else:
+                        block["dita_element"] = "sectiondiv_title"
                 continue
 
             # ---- Inline notes ----
@@ -153,13 +162,7 @@ class Mapper:
 
             # ---- Tables ----
             if btype == "table":
-                rows = block.get("rows", [])
-                # Check if abbreviation table
-                if rows:
-                    first_row = " ".join(str(c) for c in rows[0]).lower()
-                    if any(sig in first_row for sig in self._abbr_signals):
-                        block["dita_element"] = "dl"
-                        continue
+                # Always use <table> — <dl> is not used for any table output.
                 block["dita_element"] = "table"
                 continue
 

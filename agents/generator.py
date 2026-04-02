@@ -99,7 +99,7 @@ def _detect_topic_type(chunk: list[dict]) -> str:
         return "task"
 
     # Rule 4: majority tables → reference
-    table_count = sum(1 for e in body_elements if e in ("table", "dl"))
+    table_count = sum(1 for e in body_elements if e == "table")
     para_count  = sum(1 for e in body_elements if e == "p")
     total = len(body_elements)
 
@@ -803,23 +803,7 @@ class Generator:
                         _make_row(tbody_el, row_data, ncols, is_header_row=False)
                 continue
 
-            # ---- Definition list ----
-            if de == "dl":
-                flush_all()
-                rows = block.get("rows", [])
-                if not rows:
-                    continue
-                dl_el = etree.SubElement(parent, _tag(ns, "dl"))
-                for row_data in rows[1:]:  # skip header row
-                    if len(row_data) >= 2:
-                        dle = etree.SubElement(dl_el, _tag(ns, "dlentry"))
-                        dt = etree.SubElement(dle, _tag(ns, "dt"))
-                        _safe_text(dt, str(row_data[0]))
-                        dd = etree.SubElement(dle, _tag(ns, "dd"))
-                        _safe_text(dd, str(row_data[1]))
-                continue
-
-            # ---- Dropped / None ----
+# ---- Dropped / None ----
             if de in ("dropped", None):
                 continue
 
