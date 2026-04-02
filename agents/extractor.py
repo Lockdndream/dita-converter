@@ -493,15 +493,18 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 "horizontal_strategy":  "lines",
                 "snap_tolerance":       3,
                 "join_tolerance":       3,
-                "min_words_vertical":   2,
-                "min_words_horizontal": 1,
+                "min_words_vertical":   3,   # require 3 vertically-aligned words per column
+                "min_words_horizontal": 2,   # require at least 2 words per row
                 "intersection_tolerance": 3,
             }
             try:
                 ts_table_objs = page.find_tables(table_settings=_TEXT_STRAT)
             except Exception:
                 ts_table_objs = []
-            ts_bboxes: list = [t.bbox for t in ts_table_objs]
+            # Only track bboxes of tables that are actually committed to page_blocks.
+            # Tracking ALL detected bboxes caused false-positive exclusion zones that
+            # silently dropped body text on pages with any horizontal rule.
+            ts_added_bboxes: list = []
 
             for ti, tbl in enumerate(ts_table_objs):
                 bbox = tbl.bbox
@@ -517,13 +520,18 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 if not raw:
                     continue
                 rows = [[str(c or "").strip() for c in row] for row in raw]
+                # Require at least 2 rows — single-row detections are almost always
+                # false positives from page decorators or section dividers
+                if len(rows) < 2:
+                    continue
                 if any(any(cell for cell in row) for row in rows):
                     blk = make_block("table", "", is_header=True, rows=rows)
                     blk["metadata"]["n_header_rows"] = 1
                     page_blocks.append((btop, blk))
+                    ts_added_bboxes.append(tbl.bbox)
 
-            # Merge ts_bboxes into std_bboxes so Pass 2 deduplication covers them
-            std_bboxes = std_bboxes + ts_bboxes
+            # Only exclude areas occupied by confirmed ts tables from word extraction
+            std_bboxes = std_bboxes + ts_added_bboxes
 
             # Pass 2: ROW_SHOW borderless table detector
             for rs_rows, rs_y in _extract_rowshow_tables(page):
