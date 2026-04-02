@@ -84,27 +84,32 @@ _DROP_PATTERNS = [
 
 _ROW_SHOW_THICK = 1.5   # minimum rect height (pts) to be a header boundary rule
 _ROW_SHOW_COL_GAP = 40  # fallback minimum — kept for straddle heuristics
-_ROW_SHOW_MIN_GAP_PT = 10  # whitespace projection: min gap width (pts) to split columns
+_ROW_SHOW_MIN_GAP_PT = 7   # whitespace projection: min gap width (pts) to split columns
+                           # With span-based coverage, intra-column inter-word gaps are
+                           # typically 2-3pt, so 7pt safely separates real column gaps
+                           # (which are >=8pt in observed MDE tables) from word spacing.
 
 
 def _col_breaks_from_projection(words: list, x0: float, x1: float) -> list[float]:
     """
-    Infer column boundaries from ALL table words using a whitespace-projection
-    histogram rather than a single-band gap threshold.
+    Infer column boundaries from word spans using a filled-coverage projection.
 
-    Builds a 1-pt density array over the table width, marks every integer
-    position where a word starts, then finds "whitespace deserts" (contiguous
-    zero zones >= _ROW_SHOW_MIN_GAP_PT wide) and places a column boundary at
-    each gap midpoint.  This handles:
-      - Inconsistent column spacing (no fixed % threshold)
-      - Sparse header rows (evidence drawn from all rows)
+    Builds a 1-pt boolean coverage array over the table width and marks every
+    integer position covered by at least one word (x0..x1).  Contiguous zero
+    zones (no word covers that x range) >= _ROW_SHOW_MIN_GAP_PT wide are true
+    inter-column whitespace; a boundary is placed at each gap midpoint.
+
+    Using spans (not just word starts) prevents false breaks caused by the
+    intra-column inter-word gaps that occur when a multi-word column header
+    (e.g. "UL Report Number") has words spread 8-30 pt apart.
     """
     width = int(x1 - x0) + 2
     density = [0] * width
     for w in words:
-        xi = int(round(w["x0"] - x0))
-        if 0 <= xi < width:
-            density[xi] += 1
+        xi0 = max(0, int(round(w["x0"] - x0)))
+        xi1 = min(width - 1, int(round(w["x1"] - x0)))
+        for xi in range(xi0, xi1 + 1):
+            density[xi] = 1
 
     breaks: list[float] = [x0]
     in_gap = False
@@ -126,7 +131,7 @@ def _col_breaks_from_projection(words: list, x0: float, x1: float) -> list[float
     return breaks
 
 
-def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
+def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float, float]]:
     """
     Detect and extract ROW_SHOW borderless tables from a pdfplumber page.
 
@@ -136,13 +141,30 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
     """
     from collections import defaultdict
 
-    rects = sorted(page.rects, key=lambda r: r["top"])
+    # Collect horizontal rule objects from both rects and lines.
+    # Some PDFs (e.g. FrameMaker-generated MDE files) store table rules as
+    # PDF line operators (page.lines) rather than filled rectangles.
+    # Convert lines to synthetic rect-like dicts so the rest of the detector
+    # can treat them uniformly.  Use linewidth to carry thickness information:
+    # a line with linewidth >= _ROW_SHOW_THICK is considered a "thick" header
+    # rule; thinner lines are row separators.
+    rule_objects: list[dict] = list(page.rects)
+    for ln in page.lines:
+        if ln["x1"] - ln["x0"] > 50:  # horizontal span only
+            lw = ln.get("linewidth", 0.5)
+            rule_objects.append({
+                **ln,
+                "top":    ln["top"],
+                "bottom": ln["top"] + lw,   # synthetic height = linewidth
+            })
+    rule_objects.sort(key=lambda r: r["top"])
+
     words = page.extract_words(
         x_tolerance=3, y_tolerance=5, extra_attrs=["fontname", "size"]
     )
 
     span_groups: dict = defaultdict(list)
-    for r in rects:
+    for r in rule_objects:
         if r["x1"] - r["x0"] > 50:
             key = (round(r["x0"], 0), round(r["x1"], 0))
             span_groups[key].append(r)
@@ -160,19 +182,41 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
         if len(thick) < 2:
             continue
 
-        # Each consecutive pair of thick rules = one header band
+        # Cluster consecutive thick rules into the "header cluster": a run of
+        # adjacent thick rules where each is within 50pt of the previous one.
+        # Thick rules further into the table are mid-table repeat-header rules;
+        # treating all thick rules as header bands caused header_bottom to
+        # encompass the entire table body, skipping all its data rows.
+        header_cluster = [thick[0]]
+        for r in thick[1:]:
+            if r["top"] - header_cluster[-1]["bottom"] <= 50:
+                header_cluster.append(r)
+            else:
+                break   # remaining thick rules are mid-table markers
+
+        if len(header_cluster) < 2:
+            continue
+
+        # Each consecutive pair in the header cluster = one header band
         header_bands: list[tuple[float, float]] = []
-        for i in range(len(thick) - 1):
-            header_bands.append((thick[i]["top"], thick[i + 1]["bottom"]))
+        for i in range(len(header_cluster) - 1):
+            header_bands.append((header_cluster[i]["top"], header_cluster[i + 1]["bottom"]))
 
-        table_top     = thick[0]["top"]
-        header_bottom = thick[-1]["bottom"]
+        table_top     = header_cluster[0]["top"]
+        header_bottom = header_cluster[-1]["bottom"]
 
-        row_seps = sorted([r["top"] for r in thin if r["top"] > header_bottom])
+        # Mid-table thick rules (beyond the header cluster) become extra row
+        # separators so their content is extracted as bold repeat-header rows.
+        mid_thick = thick[len(header_cluster):]
+        mid_thick_tops = [r["top"] for r in mid_thick] + [r["bottom"] for r in mid_thick]
+
+        row_seps = sorted(
+            [r["top"] for r in thin if r["top"] > header_bottom] + mid_thick_tops
+        )
         if not row_seps:
             continue
 
-        table_bottom = thin[-1]["bottom"]
+        table_bottom = thin[-1]["bottom"] if thin else mid_thick[-1]["bottom"] if mid_thick else header_bottom + 20
 
         t_words = [
             w for w in words
@@ -207,10 +251,19 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
 
         last_hdr_top, last_hdr_bot = header_bands[-1]
 
-        # Use whitespace projection across ALL table words to find column
-        # boundaries.  More robust than single-band gap analysis when columns
-        # have irregular spacing or the header band has sparse content.
-        col_breaks = _col_breaks_from_projection(t_words, x0, x1)
+        # Use whitespace projection on HEADER words only.  Using all table
+        # words (including data rows) creates many 10-12pt inter-word gaps
+        # across the row that are indistinguishable from real column gaps,
+        # causing every inter-word space to become a false column break.
+        # Header words have one cluster per column with clear gaps between
+        # clusters, making them far more reliable for column detection.
+        # Fall back to all words (with a larger min_gap guard) only when the
+        # header is so sparse that a single-column result would be returned.
+        col_breaks = _col_breaks_from_projection(best_col_words, x0, x1)
+        if len(col_breaks) <= 2:
+            # Sparse header: retry with all table words and a tighter gap
+            # guard (but still > typical inter-word space of ~2pt)
+            col_breaks = _col_breaks_from_projection(t_words, x0, x1)
         n_cols = len(col_breaks) - 1
 
         def _assign_col(wx: float) -> int:
@@ -286,7 +339,7 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
             if any(c.strip() for c in row):
                 rows.append(row)
 
-        results.append((rows, table_top))
+        results.append((rows, table_top, table_bottom))
 
     return results
 
@@ -485,31 +538,63 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 y_pos = std_bboxes[ti][1] if ti < len(std_bboxes) else 0.0
                 page_blocks.append((y_pos, make_block("table", "", is_header=True, rows=rows)))
 
+            # Pass 2: ROW_SHOW borderless table detector — runs BEFORE Pass 1.5
+            # so that its (correct) column detection takes priority over pdfplumber's
+            # text-strategy column detection, which fragments multi-word column headers.
+            rs_bboxes: list = []
+            for rs_rows, rs_y, rs_ybot in _extract_rowshow_tables(page):
+                if not rs_rows:
+                    continue
+                # Skip if Y overlaps a Pass-1 bordered table
+                skip = False
+                for bbox in std_bboxes:
+                    if len(bbox) == 4:
+                        _, btop, _, bbot = bbox
+                        if btop - 20 <= rs_y <= bbot + 20:
+                            skip = True
+                            break
+                if not skip:
+                    blk = make_block("table", "", is_header=True, rows=rs_rows)
+                    blk["metadata"]["n_header_rows"] = 1
+                    page_blocks.append((rs_y, blk))
+                    # Record bbox so Pass 1.5 can skip this region
+                    rs_bboxes.append((0, rs_y, 999, rs_ybot))
+
+            # Merge ROW_SHOW bboxes into std_bboxes before Pass 1.5 runs
+            std_bboxes = std_bboxes + rs_bboxes
+
             # Pass 1.5: pdfplumber text-strategy detector (horizontal rules +
-            # text-aligned columns).  Catches tables that have horizontal lines
-            # but no vertical lines and that are not in the ROW_SHOW rect format.
+            # text-aligned columns).  Only used for tables missed by both Pass 1
+            # and Pass 2 (ROW_SHOW).  Running after ROW_SHOW ensures that tables
+            # already captured with correct column layout are not re-detected with
+            # pdfplumber's text-strategy column detection, which fragments multi-word
+            # column headers into many narrow false columns.
             _TEXT_STRAT = {
                 "vertical_strategy":    "text",
                 "horizontal_strategy":  "lines",
                 "snap_tolerance":       3,
                 "join_tolerance":       3,
-                "min_words_vertical":   3,   # require 3 vertically-aligned words per column
-                "min_words_horizontal": 2,   # require at least 2 words per row
+                "min_words_vertical":   3,
+                "min_words_horizontal": 2,
                 "intersection_tolerance": 3,
             }
             try:
                 ts_table_objs = page.find_tables(table_settings=_TEXT_STRAT)
             except Exception:
                 ts_table_objs = []
-            # Only track bboxes of tables that are actually committed to page_blocks.
-            # Tracking ALL detected bboxes caused false-positive exclusion zones that
-            # silently dropped body text on pages with any horizontal rule.
             ts_added_bboxes: list = []
 
+            page_height = page.height or 792.0
             for ti, tbl in enumerate(ts_table_objs):
                 bbox = tbl.bbox
                 _, btop, _, bbot = bbox
-                # Skip if Y overlaps a Pass-1 bordered table
+                # Reject tables that span >70% of the page height — these are
+                # almost always false positives caused by page margin lines being
+                # treated as table row separators, turning the whole page into one
+                # giant "table".
+                if (bbot - btop) / page_height > 0.70:
+                    continue
+                # Skip if Y overlaps Pass-1 bordered table OR Pass-2 ROW_SHOW table
                 overlaps = any(
                     len(b) == 4 and b[1] - 20 <= btop <= b[3] + 20
                     for b in std_bboxes
@@ -520,8 +605,6 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 if not raw:
                     continue
                 rows = [[str(c or "").strip() for c in row] for row in raw]
-                # Require at least 2 rows — single-row detections are almost always
-                # false positives from page decorators or section dividers
                 if len(rows) < 2:
                     continue
                 if any(any(cell for cell in row) for row in rows):
@@ -530,31 +613,7 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                     page_blocks.append((btop, blk))
                     ts_added_bboxes.append(tbl.bbox)
 
-            # Only exclude areas occupied by confirmed ts tables from word extraction
             std_bboxes = std_bboxes + ts_added_bboxes
-
-            # Pass 2: ROW_SHOW borderless table detector
-            for rs_rows, rs_y in _extract_rowshow_tables(page):
-                if not rs_rows:
-                    continue
-                # Skip if Y overlaps a bordered table already captured
-                skip = False
-                for bbox in std_bboxes:
-                    if len(bbox) == 4:
-                        _, btop, _, bbot = bbox
-                        if btop - 20 <= rs_y <= bbot + 20:
-                            skip = True
-                            break
-                if not skip:
-                    # thead = only the very first thick-bordered row (row index 0).
-                    # Subsequent thick-bordered rows (e.g. mid-table straddles) go
-                    # to tbody with bold marker so the generator can render <b>.
-                    # Rule: n_header_rows = 1 always (first row only).
-                    # Mid-table "header" rows are marked __BOLD__ by _words_in_band
-                    # so the generator wraps their text in <b>.
-                    blk = make_block("table", "", is_header=True, rows=rs_rows)
-                    blk["metadata"]["n_header_rows"] = 1
-                    page_blocks.append((rs_y, blk))
 
             # ---- Words → lines ----
             words = page.extract_words(
@@ -566,15 +625,10 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
             )
 
             # Build set of Y ranges to exclude — areas covered by extracted tables
-            # This prevents duplicate blocks (e.g. "IMPORTANT INFORMATION" extracted
-            # both as a bordered table AND as a word-level line)
             excluded_y_bands: list[tuple[float, float]] = []
             for bbox in std_bboxes:
                 if len(bbox) == 4:
                     excluded_y_bands.append((bbox[1] - 2, bbox[3] + 2))
-            for _, rs_y in _extract_rowshow_tables(page):
-                # ROW_SHOW tables: exclude their full Y range
-                pass  # ROW_SHOW already de-duped via page_blocks; skip here
 
             def _in_table_area(y: float) -> bool:
                 for y0, y1 in excluded_y_bands:
