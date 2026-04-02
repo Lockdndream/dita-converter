@@ -78,12 +78,7 @@ table_map:
     colsep: 0                # default no column separators (ROW_SHOW style)
   # colwidth: preserved from source when detected (e.g. 0.60*, 323.57pt)
   colwidth_preserve: true
-  abbreviations: dl
-  abbreviation_signals:
-    - "Term"
-    - "Abbreviation"
-    - "Acronym"
-    - "Description"
+  # dl is not used — all tables render as <table> regardless of content
 
 note_map:
   - pattern: "IMPORTANT INFORMATION"
