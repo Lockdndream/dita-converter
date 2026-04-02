@@ -83,7 +83,47 @@ _DROP_PATTERNS = [
 # ---------------------------------------------------------------------------
 
 _ROW_SHOW_THICK = 1.5   # minimum rect height (pts) to be a header boundary rule
-_ROW_SHOW_COL_GAP = 40  # fallback minimum — overridden by dynamic calc below
+_ROW_SHOW_COL_GAP = 40  # fallback minimum — kept for straddle heuristics
+_ROW_SHOW_MIN_GAP_PT = 10  # whitespace projection: min gap width (pts) to split columns
+
+
+def _col_breaks_from_projection(words: list, x0: float, x1: float) -> list[float]:
+    """
+    Infer column boundaries from ALL table words using a whitespace-projection
+    histogram rather than a single-band gap threshold.
+
+    Builds a 1-pt density array over the table width, marks every integer
+    position where a word starts, then finds "whitespace deserts" (contiguous
+    zero zones >= _ROW_SHOW_MIN_GAP_PT wide) and places a column boundary at
+    each gap midpoint.  This handles:
+      - Inconsistent column spacing (no fixed % threshold)
+      - Sparse header rows (evidence drawn from all rows)
+    """
+    width = int(x1 - x0) + 2
+    density = [0] * width
+    for w in words:
+        xi = int(round(w["x0"] - x0))
+        if 0 <= xi < width:
+            density[xi] += 1
+
+    breaks: list[float] = [x0]
+    in_gap = False
+    gap_start = 0
+
+    for i, occ in enumerate(density):
+        if occ == 0 and not in_gap:
+            in_gap, gap_start = True, i
+        elif occ > 0 and in_gap:
+            gap_w = i - gap_start
+            if gap_w >= _ROW_SHOW_MIN_GAP_PT:
+                mid = x0 + gap_start + gap_w / 2
+                # Ignore tiny fragment breaks close to the previous boundary
+                if mid - breaks[-1] > 15:
+                    breaks.append(mid)
+            in_gap = False
+
+    breaks.append(x1 + 10)
+    return breaks
 
 
 def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
@@ -165,18 +205,12 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float]]:
         if not best_col_words:
             best_col_words = t_words
 
-        x_positions = sorted(set(round(w["x0"], 0) for w in best_col_words))
-        # Dynamic column gap threshold: 10% of table width, minimum 30pt.
-        # This handles both wide tables (e.g. 3-col Related Docs ~406pt wide,
-        # threshold ~41pt) and narrow tables (TOC ~178pt wide, threshold 30pt).
-        _dyn_col_gap = max(30, (x1 - x0) * 0.10)
         last_hdr_top, last_hdr_bot = header_bands[-1]
 
-        col_breaks = [x0]
-        for i in range(1, len(x_positions)):
-            if x_positions[i] - x_positions[i - 1] > _dyn_col_gap:
-                col_breaks.append(x_positions[i])
-        col_breaks.append(x1 + 10)
+        # Use whitespace projection across ALL table words to find column
+        # boundaries.  More robust than single-band gap analysis when columns
+        # have irregular spacing or the header band has sparse content.
+        col_breaks = _col_breaks_from_projection(t_words, x0, x1)
         n_cols = len(col_breaks) - 1
 
         def _assign_col(wx: float) -> int:
@@ -450,6 +484,46 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                 rows = [[cell or "" for cell in row] for row in table_data]
                 y_pos = std_bboxes[ti][1] if ti < len(std_bboxes) else 0.0
                 page_blocks.append((y_pos, make_block("table", "", is_header=True, rows=rows)))
+
+            # Pass 1.5: pdfplumber text-strategy detector (horizontal rules +
+            # text-aligned columns).  Catches tables that have horizontal lines
+            # but no vertical lines and that are not in the ROW_SHOW rect format.
+            _TEXT_STRAT = {
+                "vertical_strategy":    "text",
+                "horizontal_strategy":  "lines",
+                "snap_tolerance":       3,
+                "join_tolerance":       3,
+                "min_words_vertical":   2,
+                "min_words_horizontal": 1,
+                "intersection_tolerance": 3,
+            }
+            try:
+                ts_table_objs = page.find_tables(table_settings=_TEXT_STRAT)
+            except Exception:
+                ts_table_objs = []
+            ts_bboxes: list = [t.bbox for t in ts_table_objs]
+
+            for ti, tbl in enumerate(ts_table_objs):
+                bbox = tbl.bbox
+                _, btop, _, bbot = bbox
+                # Skip if Y overlaps a Pass-1 bordered table
+                overlaps = any(
+                    len(b) == 4 and b[1] - 20 <= btop <= b[3] + 20
+                    for b in std_bboxes
+                )
+                if overlaps:
+                    continue
+                raw = tbl.extract()
+                if not raw:
+                    continue
+                rows = [[str(c or "").strip() for c in row] for row in raw]
+                if any(any(cell for cell in row) for row in rows):
+                    blk = make_block("table", "", is_header=True, rows=rows)
+                    blk["metadata"]["n_header_rows"] = 1
+                    page_blocks.append((btop, blk))
+
+            # Merge ts_bboxes into std_bboxes so Pass 2 deduplication covers them
+            std_bboxes = std_bboxes + ts_bboxes
 
             # Pass 2: ROW_SHOW borderless table detector
             for rs_rows, rs_y in _extract_rowshow_tables(page):
