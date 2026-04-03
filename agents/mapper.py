@@ -67,7 +67,24 @@ class Mapper:
         """Annotate all blocks with dita_element. Returns the same list (mutated)."""
         blocks = self._merge_split_headings(blocks)
         blocks = self._reclassify_callout_tables(blocks)
-        topic_type = self._detect_topic_type(blocks)
+
+        # Pre-compute per-H1-slice task detection.
+        # Each H1 starts a new topic; we count numbered list items in that
+        # slice independently so every topic in a multi-topic document is
+        # evaluated on its own structure.
+        h1_indices = [
+            i for i, b in enumerate(blocks)
+            if b.get("type") == "heading" and b.get("level", 1) == 1
+        ]
+        h1_task: dict[int, bool] = {}
+        for j, pos in enumerate(h1_indices):
+            end = h1_indices[j + 1] if j + 1 < len(h1_indices) else len(blocks)
+            numbered = sum(
+                1 for b in blocks[pos:end]
+                if b.get("type") == "list_item"
+                and b.get("metadata", {}).get("list_kind") == "numbered"
+            )
+            h1_task[pos] = (numbered >= 2)
 
         first_h1_seen = False
         in_task_context = False
@@ -85,14 +102,13 @@ class Mapper:
                     if not first_h1_seen:
                         block["dita_element"] = "title"
                         first_h1_seen = True
-                        # Task topics start in task context so numbered items become steps
-                        in_task_context = (topic_type == "task")
                     else:
                         block["dita_element"] = "section_title"
-                        in_task_context = False
+                    # Per-slice task detection: True iff this H1's slice has ≥2 numbered items
+                    in_task_context = h1_task.get(i, False)
                 elif level in (2, 3):
                     block["dita_element"] = "sectiondiv_title"
-                    in_task_context = False  # reset; re-triggers via signal phrase if needed
+                    in_task_context = False
                 else:
                     block["dita_element"] = "p"
                 continue
@@ -113,7 +129,7 @@ class Mapper:
                 if list_kind == "bullet":
                     block["dita_element"] = "ul_li"
                 elif list_kind == "numbered":
-                    if in_task_context and topic_type == "task":
+                    if in_task_context:
                         block["dita_element"] = "step"
                     else:
                         block["dita_element"] = "ol_li"
@@ -188,7 +204,6 @@ class Mapper:
         # Store stats on first block
         if blocks:
             blocks[0].setdefault("metadata", {})
-            blocks[0]["metadata"]["topic_type"] = topic_type
             blocks[0]["metadata"]["fallback_count"] = fallback_count
 
         return blocks
