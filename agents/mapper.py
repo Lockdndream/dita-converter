@@ -108,7 +108,8 @@ class Mapper:
                     in_task_context = h1_task.get(i, False)
                 elif level in (2, 3):
                     block["dita_element"] = "sectiondiv_title"
-                    in_task_context = False
+                    # Do NOT reset in_task_context here — H2/H3 are sub-sections
+                    # within the same topic and must inherit the H1's task context.
                 else:
                     block["dita_element"] = "p"
                 continue
