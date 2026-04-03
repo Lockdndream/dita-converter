@@ -13,7 +13,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v2.2"
+VERSION = "v2.3"
 
 _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
@@ -672,3 +672,40 @@ with right_col:
                         f"⚠️ {fb} block(s) used fallback `<p>`. "
                         "Review the Validation tab for details."
                     )
+
+            # ── Block diagnostics ────────────────────────────────────────
+            import json as _json
+            with st.expander("🔬 Block diagnostics (debug)", expanded=False):
+                blks = res["blocks"]
+                st.caption(f"{len(blks)} total blocks after mapping")
+                rows = []
+                for b in blks:
+                    rows.append({
+                        "type":         b.get("type"),
+                        "dita_element": b.get("dita_element"),
+                        "list_kind":    b.get("metadata", {}).get("list_kind", ""),
+                        "text":         b.get("text", "")[:60],
+                    })
+                # Summary counts
+                from collections import Counter
+                elem_counts = Counter(r["dita_element"] for r in rows)
+                type_counts = Counter(r["type"] for r in rows)
+                st.markdown("**Block types (extractor):**  " +
+                            "  ".join(f"`{k}` × {v}" for k, v in sorted(type_counts.items())))
+                st.markdown("**DITA elements (mapper):**  " +
+                            "  ".join(f"`{k}` × {v}" for k, v in sorted(elem_counts.items())))
+                numbered = [r for r in rows if r["list_kind"] == "numbered"]
+                st.markdown(f"**Numbered list_items detected:** {len(numbered)}")
+                if numbered:
+                    for r in numbered[:10]:
+                        st.text(f"  [{r['dita_element']}] {r['text']}")
+                    if len(numbered) > 10:
+                        st.caption(f"  … and {len(numbered) - 10} more")
+                # Full JSON download
+                diag_json = _json.dumps(rows, indent=2, ensure_ascii=False)
+                st.download_button(
+                    "⬇️ Download block JSON",
+                    data=diag_json.encode("utf-8"),
+                    file_name=Path(res["source_name"]).stem + "_blocks.json",
+                    mime="application/json",
+                )

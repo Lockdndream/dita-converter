@@ -713,8 +713,8 @@ def extract_pdf(file_bytes: bytes, page_range: str = "") -> list[dict]:
                     prev_para = None
                     continue
 
-                # Numbered item detection
-                num_match = re.match(r"^(\d{1,2})\s{1,4}(.+)", text)
+                # Numbered item detection — handles "1 Step", "1. Step", "1) Step"
+                num_match = re.match(r"^(\d{1,2})(?:[.)]\s+|\s{1,4})(.+)", text)
                 if num_match and block_type == "paragraph":
                     text = num_match.group(2)
                     block_type = "list_item"
@@ -884,8 +884,8 @@ def extract_docx(file_bytes: bytes, image_folder: str = "") -> list[dict]:
             blocks.append(make_block("list_item", text, metadata={"list_kind": "bullet"}))
             continue
 
-        # Numbered item
-        num_match = re.match(r"^(\d{1,2})[.)]\s+(.+)", text)
+        # Numbered item — handles "1. Step", "1) Step", "1 Step"
+        num_match = re.match(r"^(\d{1,2})(?:[.)]\s+|\s{1,4})(.+)", text)
         if num_match:
             blocks.append(make_block(
                 "list_item", num_match.group(2),
