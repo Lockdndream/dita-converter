@@ -13,7 +13,7 @@ from pathlib import Path
 
 import streamlit as st
 
-VERSION = "v2.1"
+VERSION = "v2.2"
 
 _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
