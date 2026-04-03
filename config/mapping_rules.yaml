@@ -8,17 +8,7 @@
 
 topic_type: concept
 topic_type_signals:
-  task:
-    - "proceed as follows"
-    - "to configure"
-    - "to install"
-    - "to verify"
-    - "proceed with"
-    - "to activate"
-    - "to program"
-    - "to enable"
-    - "to disable"
-    - "to set up"
+  task: []  # structural detection only: ≥2 numbered list_items → task
   reference:
     - "parts list"
     - "the following table"

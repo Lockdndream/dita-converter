@@ -52,9 +52,6 @@ class Mapper:
                 entry.get("type", "note"),
             ))
 
-        self._task_signals = [
-            s.lower() for s in self.rules.get("topic_type_signals", {}).get("task", [])
-        ]
         self._ref_signals = [
             s.lower() for s in self.rules.get("topic_type_signals", {}).get("reference", [])
         ]
@@ -102,11 +99,6 @@ class Mapper:
 
             # ---- Paragraphs ----
             if btype == "paragraph":
-                tl = text.lower()
-                # Task-context trigger
-                if any(sig in tl for sig in self._task_signals):
-                    in_task_context = True
-
                 # UI menucascade
                 if self._ui_pattern.match(text) and ">" in text:
                     block["dita_element"] = "menucascade"
@@ -271,18 +263,19 @@ class Mapper:
     # -----------------------------------------------------------------------
 
     def _detect_topic_type(self, blocks: list[dict]) -> str:
-        # Gerund title → task ("Opening the Dispenser", "Installing ...", etc.)
-        for block in blocks:
-            if block.get("type") == "heading" and block.get("level") == 1:
-                first_word = block.get("text", "").split()
-                first_word = first_word[0] if first_word else ""
-                if first_word.endswith("ing") and len(first_word) > 4:
-                    return "task"
-                break
+        # Structural detection: ≥2 numbered list items → task.
+        # This is more reliable than title-wording or phrase scanning:
+        # "Installation Procedure", "Opening the Dispenser", and any other
+        # procedure title all classify correctly, and prose that happens to
+        # contain task-like phrases never causes a false positive.
+        numbered_count = sum(
+            1 for b in blocks
+            if b.get("type") == "list_item"
+            and b.get("metadata", {}).get("list_kind") == "numbered"
+        )
+        if numbered_count >= 2:
+            return "task"
         all_text = " ".join(b.get("text", "").lower() for b in blocks)
-        for sig in self._task_signals:
-            if sig in all_text:
-                return "task"
         for sig in self._ref_signals:
             if sig in all_text:
                 return "reference"
