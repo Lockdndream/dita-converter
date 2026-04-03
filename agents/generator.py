@@ -460,9 +460,12 @@ class Generator:
             if de == "title":
                 past_title = True
                 continue
-            if past_title and de == "p" and not first_para:
-                first_para = b.get("text", "")
-                break
+            if past_title:
+                if de == "sectiondiv_title":
+                    break  # H2 immediately after H1 — no shortdesc
+                if de == "p" and not first_para:
+                    first_para = b.get("text", "")
+                    break
 
         if first_para:
             sd = etree.SubElement(root, _tag(ns, "shortdesc"))
@@ -542,22 +545,54 @@ class Generator:
 
         current_section: etree._Element | None = None
         current_sectiondiv: etree._Element | None = None
-        step_buffer: list[dict] = []
+        current_steps_el: etree._Element | None = None
+        current_step_el: etree._Element | None = None
+        current_step_info_el: etree._Element | None = None
         ul_buffer: list[dict] = []
         ol_buffer: list[dict] = []
+        info_ul_buffer: list[dict] = []
+        info_ol_buffer: list[dict] = []
         skip_first_para = first_para_text  # used as shortdesc already
 
-        def flush_steps():
-            nonlocal step_buffer
-            if not step_buffer:
+        def get_step_info() -> etree._Element:
+            nonlocal current_step_info_el
+            if current_step_info_el is None:
+                current_step_info_el = etree.SubElement(current_step_el, _tag(ns, "info"))
+            return current_step_info_el
+
+        def flush_info_ul():
+            nonlocal info_ul_buffer
+            if not info_ul_buffer:
                 return
-            parent = current_sectiondiv or current_section or body
-            steps_el = etree.SubElement(parent, _tag(ns, "steps"))
-            for sb in step_buffer:
-                step_el = etree.SubElement(steps_el, _tag(ns, "step"))
-                cmd_el = etree.SubElement(step_el, _tag(ns, "cmd"))
-                _safe_text(cmd_el, sb.get("text", ""))
-            step_buffer = []
+            info = get_step_info()
+            ul_el = etree.SubElement(info, _tag(ns, "ul"))
+            for ub in info_ul_buffer:
+                li_el = etree.SubElement(ul_el, _tag(ns, "li"))
+                _safe_text(li_el, ub.get("text", ""))
+            info_ul_buffer = []
+
+        def flush_info_ol():
+            nonlocal info_ol_buffer
+            if not info_ol_buffer:
+                return
+            info = get_step_info()
+            ol_el = etree.SubElement(info, _tag(ns, "ol"))
+            for ob in info_ol_buffer:
+                li_el = etree.SubElement(ol_el, _tag(ns, "li"))
+                _safe_text(li_el, ob.get("text", ""))
+            info_ol_buffer = []
+
+        def close_step():
+            nonlocal current_step_el, current_step_info_el
+            flush_info_ul()
+            flush_info_ol()
+            current_step_el = None
+            current_step_info_el = None
+
+        def close_steps():
+            nonlocal current_steps_el
+            close_step()
+            current_steps_el = None
 
         def flush_ul():
             nonlocal ul_buffer
@@ -584,7 +619,7 @@ class Generator:
             ol_buffer = []
 
         def flush_all():
-            flush_steps()
+            close_steps()
             flush_ul()
             flush_ol()
 
@@ -664,48 +699,76 @@ class Generator:
                         _safe_text(uc, seg)
                 continue
 
-            # ---- List items (buffered) ----
+            # ---- Steps (inline — each step rendered immediately) ----
             if de == "step":
                 flush_ul()
                 flush_ol()
-                step_buffer.append(block)
+                close_step()  # flush pending info content from previous step
+                if current_steps_el is None:
+                    current_steps_el = etree.SubElement(parent, _tag(ns, "steps"))
+                current_step_el = etree.SubElement(current_steps_el, _tag(ns, "step"))
+                current_step_info_el = None
+                cmd_el = etree.SubElement(current_step_el, _tag(ns, "cmd"))
+                _apply_inline(cmd_el, text, ns, bold=meta.get("bold", False))
                 continue
 
+            # ---- Bullet list items ----
             if de == "ul_li":
-                flush_steps()
-                flush_ol()
-                ul_buffer.append(block)
+                if current_step_el is not None:
+                    flush_info_ol()
+                    info_ul_buffer.append(block)
+                else:
+                    close_steps()
+                    flush_ol()
+                    ul_buffer.append(block)
                 continue
 
+            # ---- Numbered list items ----
             if de == "ol_li":
-                flush_steps()
-                flush_ul()
-                ol_buffer.append(block)
+                if current_step_el is not None:
+                    flush_info_ul()
+                    info_ol_buffer.append(block)
+                else:
+                    close_steps()
+                    flush_ul()
+                    ol_buffer.append(block)
                 continue
 
             # ---- Hazard statement / Note ----
             if de and (de.startswith("note:") or de.startswith("hazard:")):
-                flush_all()
                 note_type = de.split(":", 1)[1]
                 HAZARD_TYPES = {"warning", "caution", "danger", "notice"}
+                if current_step_el is not None:
+                    flush_info_ul()
+                    flush_info_ol()
+                    render_target = get_step_info()
+                else:
+                    flush_all()
+                    render_target = parent
                 if note_type in HAZARD_TYPES:
-                    hs = etree.SubElement(parent, _tag(ns, "hazardstatement"))
+                    hs = etree.SubElement(render_target, _tag(ns, "hazardstatement"))
                     hs.set("type", note_type)
                     mp = etree.SubElement(hs, _tag(ns, "messagepanel"))
                     toh = etree.SubElement(mp, _tag(ns, "typeofhazard"))
                     _safe_text(toh, text)
                 else:
-                    note_el = etree.SubElement(parent, _tag(ns, "note"))
+                    note_el = etree.SubElement(render_target, _tag(ns, "note"))
                     note_el.set("type", note_type)
                     _safe_text(note_el, text)
                 continue
 
             # ---- Figure ----
             if de == "fig":
-                flush_all()
                 caption = meta.get("caption", text)
                 image_href = meta.get("image_href", "")
-                fig_el = etree.SubElement(parent, _tag(ns, "fig"))
+                if current_step_el is not None:
+                    flush_info_ul()
+                    flush_info_ol()
+                    render_target = get_step_info()
+                else:
+                    flush_all()
+                    render_target = parent
+                fig_el = etree.SubElement(render_target, _tag(ns, "fig"))
                 fig_title = etree.SubElement(fig_el, _tag(ns, "title"))
                 _safe_text(fig_title, caption)
                 img_el = etree.SubElement(fig_el, _tag(ns, "image"))
@@ -727,10 +790,16 @@ class Generator:
 
             # ---- Table (CALS) ----
             if de == "table":
-                flush_all()
                 rows = block.get("rows", [])
                 if not rows:
                     continue
+                if current_step_el is not None:
+                    flush_info_ul()
+                    flush_info_ol()
+                    render_target = get_step_info()
+                else:
+                    flush_all()
+                    render_target = parent
 
                 # Use n_header_rows from extractor metadata if available,
                 # otherwise fall back to straddle-based detection
@@ -744,7 +813,7 @@ class Generator:
                             break
 
                 ncols = max(len(r) for r in rows)
-                tbl = etree.SubElement(parent, _tag(ns, "table"))
+                tbl = etree.SubElement(render_target, _tag(ns, "table"))
                 tbl.set("frame", "all")
                 tgroup = etree.SubElement(tbl, _tag(ns, "tgroup"))
                 tgroup.set("cols", str(ncols))
@@ -803,7 +872,7 @@ class Generator:
                         _make_row(tbody_el, row_data, ncols, is_header_row=False)
                 continue
 
-# ---- Dropped / None ----
+            # ---- Dropped / None ----
             if de in ("dropped", None):
                 continue
 

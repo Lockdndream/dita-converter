@@ -169,177 +169,196 @@ def _extract_rowshow_tables(page) -> list[tuple[list[list[str]], float, float]]:
             key = (round(r["x0"], 0), round(r["x1"], 0))
             span_groups[key].append(r)
 
-    results: list[tuple[list[list[str]], float]] = []
+    results: list[tuple[list[list[str]], float, float]] = []
 
     for (x0, x1), group in span_groups.items():
         if len(group) < 3:
             continue
 
         group = sorted(group, key=lambda r: r["top"])
-        thick = [r for r in group if (r["bottom"] - r["top"]) >= _ROW_SHOW_THICK]
-        thin  = [r for r in group if (r["bottom"] - r["top"]) <  _ROW_SHOW_THICK]
 
-        if len(thick) < 2:
-            continue
-
-        # Cluster consecutive thick rules into the "header cluster": a run of
-        # adjacent thick rules where each is within 50pt of the previous one.
-        # Thick rules further into the table are mid-table repeat-header rules;
-        # treating all thick rules as header bands caused header_bottom to
-        # encompass the entire table body, skipping all its data rows.
-        header_cluster = [thick[0]]
-        for r in thick[1:]:
-            if r["top"] - header_cluster[-1]["bottom"] <= 50:
-                header_cluster.append(r)
+        # Split the group at large gaps: if two consecutive rules are >50pt
+        # apart, they belong to separate tables that happen to share the same
+        # x-span.  Treat each contiguous run as an independent group.
+        sub_groups: list[list] = []
+        cur: list = [group[0]]
+        for r in group[1:]:
+            if r["top"] - cur[-1]["bottom"] > 50:
+                sub_groups.append(cur)
+                cur = [r]
             else:
-                break   # remaining thick rules are mid-table markers
+                cur.append(r)
+        sub_groups.append(cur)
 
-        if len(header_cluster) < 2:
-            continue
+        for group in sub_groups:
+            if len(group) < 3:
+                continue
 
-        # Each consecutive pair in the header cluster = one header band
-        header_bands: list[tuple[float, float]] = []
-        for i in range(len(header_cluster) - 1):
-            header_bands.append((header_cluster[i]["top"], header_cluster[i + 1]["bottom"]))
+            thick = [r for r in group if (r["bottom"] - r["top"]) >= _ROW_SHOW_THICK]
+            thin  = [r for r in group if (r["bottom"] - r["top"]) <  _ROW_SHOW_THICK]
 
-        table_top     = header_cluster[0]["top"]
-        header_bottom = header_cluster[-1]["bottom"]
+            if len(thick) < 2:
+                continue
 
-        # Mid-table thick rules (beyond the header cluster) become extra row
-        # separators so their content is extracted as bold repeat-header rows.
-        mid_thick = thick[len(header_cluster):]
-        mid_thick_tops = [r["top"] for r in mid_thick] + [r["bottom"] for r in mid_thick]
-
-        row_seps = sorted(
-            [r["top"] for r in thin if r["top"] > header_bottom] + mid_thick_tops
-        )
-        if not row_seps:
-            continue
-
-        table_bottom = thin[-1]["bottom"] if thin else mid_thick[-1]["bottom"] if mid_thick else header_bottom + 20
-
-        t_words = [
-            w for w in words
-            if w["x0"] >= x0 - 5 and w["x1"] <= x1 + 5
-            and w["top"] >= table_top and w["top"] <= table_bottom + 10
-        ]
-        if not t_words:
-            continue
-
-        # Infer column boundaries — use the header band with the most
-        # distinct X start positions (most complete column definition).
-        # This handles cases where the last header band is a straddle row
-        # with fewer columns than the actual column-header row.
-        best_col_words = None
-        best_x_count = 0
-        for hdr_top_c, hdr_bot_c in header_bands:
-            cw = [w for w in t_words
-                  if hdr_top_c - 1 <= w["top"] <= hdr_bot_c - 1]
-            # Count distinct X positions with meaningful gaps
-            xs = sorted(set(round(w["x0"], 0) for w in cw))
-            distinct = 1
-            for xi in range(1, len(xs)):
-                if xs[xi] - xs[xi-1] > _ROW_SHOW_COL_GAP:
-                    distinct += 1
-            if distinct > best_x_count:
-                best_x_count = distinct
-                best_col_words = cw
-        if not best_col_words:
-            best_col_words = [w for w in t_words if w["top"] >= thick[0]["bottom"]]
-        if not best_col_words:
-            best_col_words = t_words
-
-        last_hdr_top, last_hdr_bot = header_bands[-1]
-
-        # Use whitespace projection on HEADER words only.  Using all table
-        # words (including data rows) creates many 10-12pt inter-word gaps
-        # across the row that are indistinguishable from real column gaps,
-        # causing every inter-word space to become a false column break.
-        # Header words have one cluster per column with clear gaps between
-        # clusters, making them far more reliable for column detection.
-        # Fall back to all words (with a larger min_gap guard) only when the
-        # header is so sparse that a single-column result would be returned.
-        col_breaks = _col_breaks_from_projection(best_col_words, x0, x1)
-        if len(col_breaks) <= 2:
-            # Sparse header: retry with all table words and a tighter gap
-            # guard (but still > typical inter-word space of ~2pt)
-            col_breaks = _col_breaks_from_projection(t_words, x0, x1)
-        n_cols = len(col_breaks) - 1
-
-        def _assign_col(wx: float) -> int:
-            # Use 2pt left tolerance to handle float rounding between
-            # word x0 (raw PDF units) and col_breaks (rounded rect x0).
-            for ci in range(len(col_breaks) - 1):
-                if col_breaks[ci] - 2 <= wx < col_breaks[ci + 1]:
-                    return ci
-            return n_cols - 1
-
-        def _words_in_band(top_y: float, bot_y: float, tight: bool = False) -> list[str]:
-            tol = 1 if tight else 2
-            band = [w for w in t_words
-                    if w["top"] >= top_y - tol and w["top"] <= bot_y - tol]
-            cells = [""] * n_cols
-            cell_bold = [False] * n_cols
-            cell_last_word_idx = [-1] * n_cols  # track last word position per cell
-            for w in band:
-                tm = _tm_type(w)
-                c = _assign_col(w["x0"])
-                if tm is not None:
-                    # Append TM sentinel to the last text in this cell
-                    if cells[c]:
-                        cells[c] = _encode_tm(cells[c], tm)
+            # Cluster consecutive thick rules into the "header cluster": a run of
+            # adjacent thick rules where each is within 50pt of the previous one.
+            # Thick rules further into the table are mid-table repeat-header rules;
+            # treating all thick rules as header bands caused header_bottom to
+            # encompass the entire table body, skipping all its data rows.
+            header_cluster = [thick[0]]
+            for r in thick[1:]:
+                if r["top"] - header_cluster[-1]["bottom"] <= 50:
+                    header_cluster.append(r)
                 else:
-                    cells[c] = (cells[c] + " " + w["text"]).strip()
-                    if "Bold" in w.get("fontname", ""):
-                        cell_bold[c] = True
-            result = []
-            for i, cell in enumerate(cells):
-                if cell_bold[i] and cell:
-                    result.append(f"__BOLD__{cell}")
-                else:
-                    result.append(cell)
-            return result
+                    break   # remaining thick rules are mid-table markers
 
-        rows: list[list[str]] = []
+            if len(header_cluster) < 2:
+                continue
 
-        # Header rows — detect straddled (spanning) cells
-        # Strategy: if the leftmost word in a header band starts well to the
-        # right of col1's left edge, treat it as a spanning (straddle) cell.
-        col1_right_threshold = col_breaks[0] + (col_breaks[1] - col_breaks[0]) * 0.5
+            # Each consecutive pair in the header cluster = one header band
+            header_bands: list[tuple[float, float]] = []
+            for i in range(len(header_cluster) - 1):
+                header_bands.append((header_cluster[i]["top"], header_cluster[i + 1]["bottom"]))
 
-        for hdr_top, hdr_bot in header_bands:
-            hdr = _words_in_band(hdr_top, hdr_bot, tight=True)
-            non_empty = [i for i, c in enumerate(hdr) if c.strip()]
+            table_top     = header_cluster[0]["top"]
+            header_bottom = header_cluster[-1]["bottom"]
 
-            band_words = [w for w in t_words
-                          if w["top"] >= hdr_top - 1 and w["top"] <= hdr_bot - 1]
-            leftmost_x = min((w["x0"] for w in band_words), default=x0)
+            # Mid-table thick rules (beyond the header cluster) become extra row
+            # separators so their content is extracted as bold repeat-header rows.
+            mid_thick = thick[len(header_cluster):]
+            mid_thick_tops = [r["top"] for r in mid_thick] + [r["bottom"] for r in mid_thick]
 
-            is_straddle = (
-                n_cols > 1
-                and leftmost_x > col1_right_threshold
-                and len(non_empty) > 0
+            row_seps = sorted(
+                [r["top"] for r in thin if r["top"] > header_bottom] + mid_thick_tops
             )
+            if not row_seps:
+                continue
 
-            if is_straddle:
-                all_text = " ".join(w["text"] for w in
-                                    sorted(band_words, key=lambda w: w["x0"]))
-                straddle_row = [""] * n_cols
-                straddle_row[0] = all_text.strip()
-                straddle_row[1] = f"__STRADDLE__{n_cols}"
-                rows.append(straddle_row)
-            else:
-                rows.append(hdr)
+            table_bottom = thin[-1]["bottom"] if thin else mid_thick[-1]["bottom"] if mid_thick else header_bottom + 20
 
-        # Data rows
-        band_tops = [header_bottom] + row_seps
-        band_bots = row_seps + [table_bottom + 15]
-        for top_y, bot_y in zip(band_tops, band_bots):
-            row = _words_in_band(top_y, bot_y)
-            if any(c.strip() for c in row):
-                rows.append(row)
+            t_words = [
+                w for w in words
+                if w["x0"] >= x0 - 5 and w["x1"] <= x1 + 5
+                and w["top"] >= table_top and w["top"] <= table_bottom + 10
+            ]
+            if not t_words:
+                continue
 
-        results.append((rows, table_top, table_bottom))
+            # Infer column boundaries — use the header band with the most
+            # distinct X start positions (most complete column definition).
+            # This handles cases where the last header band is a straddle row
+            # with fewer columns than the actual column-header row.
+            best_col_words = None
+            best_x_count = 0
+            for hdr_top_c, hdr_bot_c in header_bands:
+                cw = [w for w in t_words
+                      if hdr_top_c - 1 <= w["top"] <= hdr_bot_c - 1]
+                # Count distinct X positions with meaningful gaps
+                xs = sorted(set(round(w["x0"], 0) for w in cw))
+                distinct = 1
+                for xi in range(1, len(xs)):
+                    if xs[xi] - xs[xi-1] > _ROW_SHOW_COL_GAP:
+                        distinct += 1
+                if distinct > best_x_count:
+                    best_x_count = distinct
+                    best_col_words = cw
+            if not best_col_words:
+                best_col_words = [w for w in t_words if w["top"] >= thick[0]["bottom"]]
+            if not best_col_words:
+                best_col_words = t_words
+
+            last_hdr_top, last_hdr_bot = header_bands[-1]
+
+            # Use whitespace projection on HEADER words only.  Using all table
+            # words (including data rows) creates many 10-12pt inter-word gaps
+            # across the row that are indistinguishable from real column gaps,
+            # causing every inter-word space to become a false column break.
+            # Header words have one cluster per column with clear gaps between
+            # clusters, making them far more reliable for column detection.
+            # Fall back to all words (with a larger min_gap guard) only when the
+            # header is so sparse that a single-column result would be returned.
+            col_breaks = _col_breaks_from_projection(best_col_words, x0, x1)
+            if len(col_breaks) <= 2:
+                # Sparse header: retry with all table words and a tighter gap
+                # guard (but still > typical inter-word space of ~2pt)
+                col_breaks = _col_breaks_from_projection(t_words, x0, x1)
+            n_cols = len(col_breaks) - 1
+
+            def _assign_col(wx: float, _col_breaks=col_breaks, _n_cols=n_cols) -> int:
+                # Use 2pt left tolerance to handle float rounding between
+                # word x0 (raw PDF units) and col_breaks (rounded rect x0).
+                for ci in range(len(_col_breaks) - 1):
+                    if _col_breaks[ci] - 2 <= wx < _col_breaks[ci + 1]:
+                        return ci
+                return _n_cols - 1
+
+            def _words_in_band(top_y: float, bot_y: float, tight: bool = False,
+                               _t_words=t_words, _n_cols=n_cols) -> list[str]:
+                tol = 1 if tight else 2
+                band = [w for w in _t_words
+                        if w["top"] >= top_y - tol and w["top"] <= bot_y - tol]
+                cells = [""] * _n_cols
+                cell_bold = [False] * _n_cols
+                cell_last_word_idx = [-1] * _n_cols  # track last word position per cell
+                for w in band:
+                    tm = _tm_type(w)
+                    c = _assign_col(w["x0"])
+                    if tm is not None:
+                        # Append TM sentinel to the last text in this cell
+                        if cells[c]:
+                            cells[c] = _encode_tm(cells[c], tm)
+                    else:
+                        cells[c] = (cells[c] + " " + w["text"]).strip()
+                        if "Bold" in w.get("fontname", ""):
+                            cell_bold[c] = True
+                result = []
+                for i, cell in enumerate(cells):
+                    if cell_bold[i] and cell:
+                        result.append(f"__BOLD__{cell}")
+                    else:
+                        result.append(cell)
+                return result
+
+            rows: list[list[str]] = []
+
+            # Header rows — detect straddled (spanning) cells
+            # Strategy: if the leftmost word in a header band starts well to the
+            # right of col1's left edge, treat it as a spanning (straddle) cell.
+            col1_right_threshold = col_breaks[0] + (col_breaks[1] - col_breaks[0]) * 0.5
+
+            for hdr_top, hdr_bot in header_bands:
+                hdr = _words_in_band(hdr_top, hdr_bot, tight=True)
+                non_empty = [i for i, c in enumerate(hdr) if c.strip()]
+
+                band_words = [w for w in t_words
+                              if w["top"] >= hdr_top - 1 and w["top"] <= hdr_bot - 1]
+                leftmost_x = min((w["x0"] for w in band_words), default=x0)
+
+                is_straddle = (
+                    n_cols > 1
+                    and leftmost_x > col1_right_threshold
+                    and len(non_empty) > 0
+                )
+
+                if is_straddle:
+                    all_text = " ".join(w["text"] for w in
+                                        sorted(band_words, key=lambda w: w["x0"]))
+                    straddle_row = [""] * n_cols
+                    straddle_row[0] = all_text.strip()
+                    straddle_row[1] = f"__STRADDLE__{n_cols}"
+                    rows.append(straddle_row)
+                else:
+                    rows.append(hdr)
+
+            # Data rows
+            band_tops = [header_bottom] + row_seps
+            band_bots = row_seps + [table_bottom + 15]
+            for top_y, bot_y in zip(band_tops, band_bots):
+                row = _words_in_band(top_y, bot_y)
+                if any(c.strip() for c in row):
+                    rows.append(row)
+
+            results.append((rows, table_top, table_bottom))
 
     return results
 

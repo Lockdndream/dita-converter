@@ -88,12 +88,14 @@ class Mapper:
                     if not first_h1_seen:
                         block["dita_element"] = "title"
                         first_h1_seen = True
-                        in_task_context = False
+                        # Task topics start in task context so numbered items become steps
+                        in_task_context = (topic_type == "task")
                     else:
                         block["dita_element"] = "section_title"
                         in_task_context = False
                 elif level in (2, 3):
                     block["dita_element"] = "sectiondiv_title"
+                    in_task_context = False  # reset; re-triggers via signal phrase if needed
                 else:
                     block["dita_element"] = "p"
                 continue
@@ -269,6 +271,14 @@ class Mapper:
     # -----------------------------------------------------------------------
 
     def _detect_topic_type(self, blocks: list[dict]) -> str:
+        # Gerund title → task ("Opening the Dispenser", "Installing ...", etc.)
+        for block in blocks:
+            if block.get("type") == "heading" and block.get("level") == 1:
+                first_word = block.get("text", "").split()
+                first_word = first_word[0] if first_word else ""
+                if first_word.endswith("ing") and len(first_word) > 4:
+                    return "task"
+                break
         all_text = " ".join(b.get("text", "").lower() for b in blocks)
         for sig in self._task_signals:
             if sig in all_text:
