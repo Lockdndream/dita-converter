@@ -13,6 +13,8 @@ from pathlib import Path
 
 import streamlit as st
 
+VERSION = "v2.1"
+
 _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -287,7 +289,7 @@ def _badge(ttype: str) -> str:
 
 with st.sidebar:
     st.title("📄 DITA Converter")
-    st.caption("PDF & DOCX → DITA 2.0 XML")
+    st.caption(f"PDF & DOCX → DITA 2.0 XML  ·  {VERSION}")
 
     st.divider()
     st.subheader("⚙️ Configuration")
